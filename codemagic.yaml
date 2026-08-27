@@ -20,8 +20,8 @@ workflows:
       - build/ios/iphoneos/*.app
       - /tmp/xcodebuild_logs/*.log
 
-  ios-release:
-    name: iOS IPA App Store
+  ios-iphone:
+    name: iOS IPA para mi iPhone (Ad Hoc)
     instance_type: mac_mini_m2
     max_build_duration: 60
     environment:
@@ -29,7 +29,7 @@ workflows:
       xcode: latest
       cocoapods: default
       ios_signing:
-        distribution_type: app_store
+        distribution_type: ad_hoc
         bundle_identifier: com.vendemovil
       vars:
         BUNDLE_ID: com.vendemovil
@@ -44,7 +44,7 @@ workflows:
         script: |
           cd ios
           pod install
-      - name: Build IPA
+      - name: Build IPA Ad Hoc
         script: |
           flutter build ipa --release \
             --export-options-plist=/Users/builder/export_options.plist
