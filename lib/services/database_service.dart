@@ -17,7 +17,39 @@ class DatabaseService {
   Future<Database> _initDB(String filePath) async {
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
-    return await openDatabase(path, version: 1, onCreate: _createDB);
+    return await openDatabase(
+      path,
+      version: 3,
+      onCreate: _createDB,
+      onUpgrade: _upgradeDB,
+    );
+  }
+
+  static const _defaultCategories = ['Bebidas', 'Alimentos', 'Otros'];
+
+  Future<void> _upgradeDB(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.delete(
+        'categorias',
+        where: 'nombre NOT IN (?, ?, ?)',
+        whereArgs: _defaultCategories,
+      );
+      for (final cat in _defaultCategories) {
+        await db.insert(
+          'categorias',
+          {'nombre': cat},
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      }
+    }
+    if (oldVersion < 3) {
+      await db.execute(
+        "ALTER TABLE productos ADD COLUMN tipo_venta TEXT NOT NULL DEFAULT 'unidad'",
+      );
+      await db.execute(
+        "ALTER TABLE items_venta ADD COLUMN tipo_venta TEXT NOT NULL DEFAULT 'unidad'",
+      );
+    }
   }
 
   Future<void> _createDB(Database db, int version) async {
@@ -26,8 +58,8 @@ class DatabaseService {
         id TEXT PRIMARY KEY, codigo_barras TEXT NOT NULL, nombre TEXT NOT NULL,
         descripcion TEXT, categoria TEXT, precio_compra REAL NOT NULL DEFAULT 0,
         precio_venta REAL NOT NULL, stock INTEGER NOT NULL DEFAULT 0,
-        stock_minimo INTEGER NOT NULL DEFAULT 5, imagen_url TEXT,
-        fecha_creacion TEXT NOT NULL, fecha_actualizacion TEXT NOT NULL
+        stock_minimo INTEGER NOT NULL DEFAULT 5, tipo_venta TEXT NOT NULL DEFAULT 'unidad',
+        imagen_url TEXT, fecha_creacion TEXT NOT NULL, fecha_actualizacion TEXT NOT NULL
       )
     ''');
     await db.execute('''
@@ -42,7 +74,7 @@ class DatabaseService {
         id TEXT PRIMARY KEY, venta_id TEXT NOT NULL, producto_id TEXT NOT NULL,
         producto_nombre TEXT NOT NULL, codigo_barras TEXT, precio_unitario REAL NOT NULL,
         precio_compra REAL NOT NULL DEFAULT 0, cantidad INTEGER NOT NULL,
-        subtotal REAL NOT NULL, imagen_url TEXT,
+        subtotal REAL NOT NULL, tipo_venta TEXT NOT NULL DEFAULT 'unidad', imagen_url TEXT,
         FOREIGN KEY (venta_id) REFERENCES ventas (id),
         FOREIGN KEY (producto_id) REFERENCES productos (id)
       )
@@ -50,12 +82,19 @@ class DatabaseService {
     await db.execute('''
       CREATE TABLE categorias (id INTEGER PRIMARY KEY AUTOINCREMENT, nombre TEXT NOT NULL UNIQUE)
     ''');
-    for (final cat in ['Bebidas','Alimentos','Limpieza','Cuidado Personal','Snacks','Lácteos','Panadería','Otros']) {
+    for (final cat in _defaultCategories) {
       await db.insert('categorias', {'nombre': cat});
     }
     await db.execute('CREATE INDEX idx_prod_codigo ON productos (codigo_barras)');
     await db.execute('CREATE INDEX idx_ventas_fecha ON ventas (fecha)');
     await db.execute('CREATE INDEX idx_items_venta ON items_venta (venta_id)');
+  }
+
+  Future<Producto?> obtenerProducto(String id) async {
+    final db = await database;
+    final maps = await db.query('productos', where: 'id = ?', whereArgs: [id]);
+    if (maps.isEmpty) return null;
+    return Producto.fromMap(maps.first);
   }
 
   Future<void> insertarProducto(Producto p) async {

@@ -1,13 +1,16 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:audioplayers/audioplayers.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../providers/carrito_provider.dart';
 import '../services/printer_service.dart';
 import '../utils/currency_formatter.dart';
+import '../utils/metodos_pago_config.dart';
+import '../utils/sound_player.dart';
+import '../utils/whatsapp_share.dart';
+import '../widgets/safe_bottom_bar.dart';
 import '../models/venta.dart';
 
 class RevisarOrdenScreen extends StatefulWidget {
@@ -21,7 +24,12 @@ class _RevisarOrdenScreenState extends State<RevisarOrdenScreen> {
   final _montoCtrl = TextEditingController();
   bool _procesando = false;
   String? _yapeQrPath;
+  String? _plinQrPath;
+  List<String> _metodosHabilitados = List.from(MetodosPagoConfig.todos);
   String _monedaSimbolo = 'S/';
+  Venta? _ventaOk;
+  String? _avisoImpresion;
+  bool _guardando = false;
 
   @override
   void initState() {
@@ -31,13 +39,35 @@ class _RevisarOrdenScreenState extends State<RevisarOrdenScreen> {
 
   Future<void> _cargarAjustes() async {
     final prefs = await SharedPreferences.getInstance();
+    final habilitados =
+        prefs.getStringList(MetodosPagoConfig.prefsKey) ??
+        List.from(MetodosPagoConfig.todos);
     if (mounted) {
       setState(() {
         _yapeQrPath = prefs.getString('yape_qr_path');
+        _plinQrPath = prefs.getString('plin_qr_path');
+        _metodosHabilitados = habilitados;
         _monedaSimbolo = prefs.getString('moneda_simbolo') ?? 'S/';
+        if (!_metodosHabilitados.contains(_metodoPago)) {
+          _metodoPago = _metodosHabilitados.first;
+        }
       });
     }
   }
+
+  String? _qrPathActual() {
+    switch (_metodoPago) {
+      case 'yape':
+        return _yapeQrPath;
+      case 'plin':
+        return _plinQrPath;
+      default:
+        return null;
+    }
+  }
+
+  Color _colorMetodo(String metodo) =>
+      MetodosPagoConfig.colors[metodo] ?? AppTheme.primary;
 
   String _formatMoney(double amount) {
     return CurrencyFormatter.format(amount, _monedaSimbolo);
@@ -52,16 +82,14 @@ class _RevisarOrdenScreenState extends State<RevisarOrdenScreen> {
     if (_metodoPago == 'efectivo') {
       final monto = double.tryParse(_montoCtrl.text) ?? 0;
       if (monto < carrito.total) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Monto insuficiente'),
-            backgroundColor: AppTheme.error,
-          ),
-        );
+        _mostrarAviso('Monto insuficiente', AppTheme.error);
         return;
       }
     }
-    setState(() => _procesando = true);
+    setState(() {
+      _procesando = true;
+      _guardando = true;
+    });
     try {
       final venta = await carrito.finalizarVenta(
         metodoPago: _metodoPago,
@@ -70,136 +98,177 @@ class _RevisarOrdenScreenState extends State<RevisarOrdenScreen> {
             : null,
       );
 
-      // Auto imprimir
+      if (!mounted) return;
+      setState(() {
+        _ventaOk = venta;
+        _procesando = false;
+      });
+
       try {
         await PrinterService.instance.imprimirTicket(venta);
         HapticFeedback.heavyImpact();
-        try {
-          AudioPlayer().play(AssetSource('sounds/caja.mp3'));
-        } catch (_) {}
+        SoundPlayer.caja();
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Venta guardada pero no se pudo imprimir: $e'),
-              backgroundColor: AppTheme.warning,
-            ),
-          );
+          setState(() {
+            _avisoImpresion =
+                'Venta guardada. No se pudo imprimir: $e';
+          });
         }
       }
-
-      if (mounted) _mostrarExito(venta);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: AppTheme.error),
-        );
+        setState(() {
+          _procesando = false;
+          _guardando = false;
+        });
+        _mostrarAviso('Error: $e', AppTheme.error);
       }
     }
-    if (mounted) setState(() => _procesando = false);
   }
 
-  void _mostrarExito(Venta venta) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: AppTheme.success.withValues(alpha: 0.12),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.check_circle_rounded,
-                color: AppTheme.success,
-                size: 56,
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              '¡Venta Exitosa!',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _formatMoney(venta.total),
-              style: const TextStyle(
-                fontSize: 30,
-                fontWeight: FontWeight.bold,
-                color: AppTheme.primary,
-              ),
-            ),
-            if (venta.vuelto != null && venta.vuelto! > 0) ...[
-              const SizedBox(height: 10),
+  void _mostrarAviso(String mensaje, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(mensaje),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+        margin: EdgeInsets.fromLTRB(16, 0, 16, MediaQuery.of(context).padding.bottom + 80),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
+
+  void _seguirVendiendo() {
+    if (!mounted) return;
+    Navigator.of(context).pop();
+  }
+
+  Future<void> _compartirWhatsApp(Venta venta) async {
+    final texto = await PrinterService.instance.textoTicket(venta);
+    final ok = await WhatsAppShare.enviar(texto: texto);
+    if (!ok && mounted) {
+      _mostrarAviso('No se pudo abrir WhatsApp', AppTheme.error);
+    }
+  }
+
+  Future<void> _reimprimir(Venta venta) async {
+    try {
+      await PrinterService.instance.imprimirTicket(venta);
+      HapticFeedback.heavyImpact();
+      SoundPlayer.caja();
+    } catch (e) {
+      if (mounted) {
+        _mostrarAviso('No se pudo imprimir: $e', AppTheme.warning);
+      }
+    }
+  }
+
+  Widget _buildGracias(Venta venta) {
+    return Scaffold(
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
+          child: Column(
+            children: [
+              const Spacer(),
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 10,
-                ),
+                padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
-                  color: AppTheme.warning.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(12),
+                  color: AppTheme.success.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.reply, color: AppTheme.warning, size: 20),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Vuelto: ${_formatMoney(venta.vuelto!)}',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: AppTheme.warning,
-                      ),
-                    ),
-                  ],
+                child: const Icon(
+                  Icons.check_circle_rounded,
+                  color: AppTheme.success,
+                  size: 72,
                 ),
               ),
-            ],
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () async {
-                      await PrinterService.instance.imprimirTicket(venta);
-                      HapticFeedback.heavyImpact();
-                      try {
-                        AudioPlayer().play(AssetSource('sounds/caja.mp3'));
-                      } catch (_) {}
-                    },
-                    icon: const Icon(Icons.print_rounded, size: 20),
-                    label: const Text('Imprimir'),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      side: const BorderSide(color: AppTheme.primary),
-                    ),
-                  ),
+              const SizedBox(height: 20),
+              const Text(
+                '¡Gracias por su compra!',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _formatMoney(venta.total),
+                style: const TextStyle(
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.primary,
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.pop(ctx); // dialog
-                      Navigator.pop(context); // back to scanner
-                    },
-                    icon: const Icon(Icons.check, size: 20),
-                    label: const Text('Listo'),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+              if (venta.vuelto != null && venta.vuelto! > 0) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppTheme.warning.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    'Vuelto: ${_formatMoney(venta.vuelto!)}',
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: AppTheme.warning,
                     ),
                   ),
                 ),
               ],
-            ),
-          ],
+              if (_avisoImpresion != null) ...[
+                const SizedBox(height: 16),
+                Text(
+                  _avisoImpresion!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: AppTheme.warning,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+              const Spacer(),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton.icon(
+                  onPressed: _seguirVendiendo,
+                  icon: const Icon(Icons.storefront_rounded),
+                  label: const Text(
+                    'Seguir vendiendo',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: OutlinedButton.icon(
+                  onPressed: () => _compartirWhatsApp(venta),
+                  icon: const Icon(Icons.chat_rounded, color: Color(0xFF25D366)),
+                  label: const Text(
+                    'Compartir por WhatsApp',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: TextButton.icon(
+                  onPressed: () => _reimprimir(venta),
+                  icon: const Icon(Icons.print_rounded),
+                  label: const Text('Imprimir de nuevo'),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -207,11 +276,18 @@ class _RevisarOrdenScreenState extends State<RevisarOrdenScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_ventaOk != null) return _buildGracias(_ventaOk!);
+
     return Consumer<CarritoProvider>(
       builder: (context, carrito, _) {
-        if (carrito.isEmpty) {
+        if (_guardando) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+        if (carrito.isEmpty && _ventaOk == null) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) Navigator.pop(context);
+            if (mounted && _ventaOk == null) Navigator.pop(context);
           });
           return const Scaffold();
         }
@@ -262,7 +338,7 @@ class _RevisarOrdenScreenState extends State<RevisarOrdenScreen> {
                               ),
                             ),
                             Text(
-                              'x${item.cantidad}',
+                              item.formatoCantidad,
                               style: const TextStyle(
                                 color: AppTheme.textSecondary,
                                 fontSize: 13,
@@ -314,43 +390,22 @@ class _RevisarOrdenScreenState extends State<RevisarOrdenScreen> {
               const SizedBox(height: 12),
               Row(
                 children: [
-                  _buildMetodo(
-                    'efectivo',
-                    Icons.money_rounded,
-                    'Efectivo',
-                    AppTheme.success,
-                  ),
-                  const SizedBox(width: 8),
-                  _buildMetodo(
-                    'yape',
-                    Icons.phone_android_rounded,
-                    'Yape',
-                    const Color(0xFF6C2DC7),
-                  ),
-                  const SizedBox(width: 8),
-                  _buildMetodo(
-                    'plin',
-                    Icons.phone_iphone_rounded,
-                    'Plin',
-                    const Color(0xFF00BFA5),
-                  ),
-                  const SizedBox(width: 8),
-                  _buildMetodo(
-                    'tarjeta',
-                    Icons.credit_card_rounded,
-                    'Tarjeta',
-                    AppTheme.info,
-                  ),
+                  for (var i = 0; i < _metodosHabilitados.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 8),
+                    _buildMetodo(_metodosHabilitados[i]),
+                  ],
                 ],
               ),
               const SizedBox(height: 20),
 
-              // Yape QR Code
-              if (_metodoPago == 'yape' && _yapeQrPath != null) ...[
-                const SizedBox(height: 20),
-                const Text(
-                  'Escanea para pagar',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              if (MetodosPagoConfig.soportaQr(_metodoPago) &&
+                  _qrPathActual() != null) ...[
+                Text(
+                  'Escanea para pagar con ${MetodosPagoConfig.label(_metodoPago)}',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 12),
@@ -361,12 +416,12 @@ class _RevisarOrdenScreenState extends State<RevisarOrdenScreen> {
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(16),
                       border: Border.all(
-                        color: const Color(0xFF6C2DC7),
+                        color: _colorMetodo(_metodoPago),
                         width: 2,
                       ),
                     ),
                     child: Image.file(
-                      File(_yapeQrPath!),
+                      File(_qrPathActual()!),
                       width: 200,
                       height: 200,
                       fit: BoxFit.cover,
@@ -394,7 +449,7 @@ class _RevisarOrdenScreenState extends State<RevisarOrdenScreen> {
                   ),
                   decoration: InputDecoration(
                     hintText: '0.00',
-                    prefixText: 'S/ ',
+                    prefixText: '$_monedaSimbolo ',
                     prefixStyle: const TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
@@ -429,7 +484,7 @@ class _RevisarOrdenScreenState extends State<RevisarOrdenScreen> {
                       .map(
                         (m) => ActionChip(
                           label: Text(
-                            'S/$m',
+                            '$_monedaSimbolo$m',
                             style: const TextStyle(
                               fontWeight: FontWeight.w600,
                               color: AppTheme.textPrimary,
@@ -487,37 +542,38 @@ class _RevisarOrdenScreenState extends State<RevisarOrdenScreen> {
               ],
 
               const SizedBox(height: 8),
-              // Botón confirmar
-              SizedBox(
-                height: 54,
-                child: ElevatedButton.icon(
-                  onPressed: _procesando ? null : () => _procesar(carrito),
-                  icon: _procesando
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(Icons.check_circle_rounded, size: 22),
-                  label: Text(
-                    _procesando ? 'Procesando...' : 'Confirmar Venta',
-                    style: const TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.bold,
+              SafeBottomBar(
+                padding: EdgeInsets.zero,
+                child: SizedBox(
+                  height: 54,
+                  child: ElevatedButton.icon(
+                    onPressed: _procesando ? null : () => _procesar(carrito),
+                    icon: _procesando
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.check_circle_rounded, size: 22),
+                    label: Text(
+                      _procesando ? 'Procesando...' : 'Confirmar Venta',
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.primary,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primary,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
                     ),
                   ),
                 ),
               ),
-              SizedBox(height: MediaQuery.of(context).padding.bottom + 24),
             ],
           ),
         );
@@ -525,8 +581,11 @@ class _RevisarOrdenScreenState extends State<RevisarOrdenScreen> {
     );
   }
 
-  Widget _buildMetodo(String value, IconData icon, String label, Color color) {
+  Widget _buildMetodo(String value) {
     final selected = _metodoPago == value;
+    final color = _colorMetodo(value);
+    final icon = MetodosPagoConfig.icons[value] ?? Icons.payment;
+    final label = MetodosPagoConfig.label(value);
     return Expanded(
       child: GestureDetector(
         onTap: () => setState(() => _metodoPago = value),

@@ -1,7 +1,7 @@
 name: vendemas
 description: "Vende Móvil - Sistema POS con escáner de código de barras e impresión térmica"
 publish_to: 'none'
-version: 1.0.0+1
+version: 2.0.0+2
 
 environment:
   sdk: ^3.11.5
@@ -19,20 +19,13 @@ dependencies:
   provider: ^6.1.4
   uuid: ^4.5.1
   share_plus: ^11.0.0
-  pdf: ^3.11.3
-  printing: ^5.14.2
   shared_preferences: ^2.5.3
   print_bluetooth_thermal: ^1.2.1
   esc_pos_utils_plus: ^2.0.4
   image_picker: ^1.2.3
   excel: ^4.0.6
   audioplayers: ^6.7.1
-  url_launcher: ^6.3.0
-  http: ^1.2.1
-  firebase_core: ^4.12.1
-  firebase_auth: ^6.5.6
-  google_sign_in: ^6.2.1
-  firebase_messaging: ^16.4.3
+  url_launcher: ^6.3.1
 
 dev_dependencies:
   flutter_test:
@@ -43,10 +36,9 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/
+    - assets/icon/
     - assets/sounds/
-    - assets/vedemas.png
-    - assets/google.png
+    - assets/imgvendemovil.png
 
 flutter_launcher_icons:
   android: true

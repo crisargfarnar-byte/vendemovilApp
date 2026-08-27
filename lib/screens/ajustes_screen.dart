@@ -1,16 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../utils/safe_area_padding.dart';
 import '../theme/app_theme.dart';
 import '../services/printer_service.dart';
 import '../services/database_service.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:image_picker/image_picker.dart';
-import '../services/subscription_service.dart';
-import '../services/sync_service.dart';
-import '../widgets/subscription_dialog.dart';
-import '../services/auth_service.dart';
-import 'bienvenida_screen.dart';
+import '../utils/metodos_pago_config.dart';
+import '../widgets/soporte_dialog.dart';
 
 class AjustesScreen extends StatefulWidget {
   const AjustesScreen({super.key});
@@ -29,13 +27,12 @@ class _AjustesScreenState extends State<AjustesScreen> {
   String? _impresoraNombre;
   String? _impresoraMac;
   String? _yapeQrPath;
+  String? _plinQrPath;
+  List<String> _metodosHabilitados = List.from(MetodosPagoConfig.todos);
   List<String> _vendedores = [];
   String? _vendedorActivo;
   List<String> _categorias = [];
   bool _loading = true;
-  PlanType _planActivo = PlanType.trial;
-  String _userEmail = '';
-  String _userName = '';
 
   @override
   void initState() {
@@ -44,10 +41,7 @@ class _AjustesScreenState extends State<AjustesScreen> {
   }
 
   Future<void> _cargar() async {
-    _planActivo = await SubscriptionService.getCurrentPlan();
     final prefs = await SharedPreferences.getInstance();
-    _userEmail = prefs.getString('user_email') ?? '';
-    _userName = prefs.getString('user_name') ?? '';
     _nombreCtrl.text = prefs.getString('negocio_nombre') ?? 'VENDE MÓVIL';
     _direccionCtrl.text = prefs.getString('negocio_direccion') ?? '';
     _telefonoCtrl.text = prefs.getString('negocio_telefono') ?? '';
@@ -59,6 +53,9 @@ class _AjustesScreenState extends State<AjustesScreen> {
     _impresoraNombre = prefs.getString('impresora_nombre');
     _impresoraMac = prefs.getString('impresora_mac');
     _yapeQrPath = prefs.getString('yape_qr_path');
+    _plinQrPath = prefs.getString('plin_qr_path');
+    _metodosHabilitados = prefs.getStringList(MetodosPagoConfig.prefsKey) ??
+        List.from(MetodosPagoConfig.todos);
     _vendedores = prefs.getStringList('vendedores') ?? [];
     _vendedorActivo = prefs.getString('vendedor_activo');
 
@@ -93,8 +90,20 @@ class _AjustesScreenState extends State<AjustesScreen> {
       await prefs.setString('impresora_nombre', _impresoraNombre!);
     if (_impresoraMac != null)
       await prefs.setString('impresora_mac', _impresoraMac!);
-    if (_yapeQrPath != null)
+    await prefs.setStringList(
+      MetodosPagoConfig.prefsKey,
+      _metodosHabilitados,
+    );
+    if (_yapeQrPath != null) {
       await prefs.setString('yape_qr_path', _yapeQrPath!);
+    } else {
+      await prefs.remove('yape_qr_path');
+    }
+    if (_plinQrPath != null) {
+      await prefs.setString('plin_qr_path', _plinQrPath!);
+    } else {
+      await prefs.remove('plin_qr_path');
+    }
 
     if (_vendedorActivo != null)
       await prefs.setString('vendedor_activo', _vendedorActivo!);
@@ -109,6 +118,7 @@ class _AjustesScreenState extends State<AjustesScreen> {
       anchoPapel: _anchoPapel,
       mac: _impresoraMac,
       printerName: _impresoraNombre,
+      moneda: _monedaSimboloCtrl.text,
       vendedor: _vendedorActivo,
     );
 
@@ -122,67 +132,6 @@ class _AjustesScreenState extends State<AjustesScreen> {
     }
   }
 
-  Future<void> _gestionarSuscripcion() async {
-    final result = await showDialog(
-      context: context,
-      builder: (_) =>
-          SubscriptionDialog(userEmail: _userEmail, userName: _userName),
-    );
-    if (result == true) {
-      _cargar(); // Reload plan
-    }
-  }
-
-  Future<void> _sincronizarDatos() async {
-    setState(() => _loading = true);
-    final currentPlan = await SubscriptionService.getCurrentPlan();
-    bool success = false;
-
-    if (currentPlan == PlanType.nube) {
-      // Subir a la nube
-      success = await SyncService.uploadToCloud();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              success
-                  ? 'Sincronización a la nube exitosa'
-                  : 'Error al sincronizar',
-            ),
-            backgroundColor: success ? AppTheme.success : AppTheme.error,
-          ),
-        );
-      }
-    } else if (currentPlan == PlanType.local) {
-      // Descargar y limpiar nube (Desmigrar)
-      success = await SyncService.downloadFromCloud();
-      if (success) {
-        await SyncService.deleteFromCloud();
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              success ? 'Datos desmigrados a modo Local' : 'Error al desmigrar',
-            ),
-            backgroundColor: success ? AppTheme.success : AppTheme.error,
-          ),
-        );
-      }
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Plan inválido para sincronizar'),
-            backgroundColor: AppTheme.warning,
-          ),
-        );
-      }
-    }
-
-    setState(() => _loading = false);
-  }
-
   @override
   Widget build(BuildContext context) {
     if (_loading)
@@ -190,7 +139,7 @@ class _AjustesScreenState extends State<AjustesScreen> {
     return Scaffold(
       appBar: AppBar(title: const Text('Ajustes')),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: listBottomPadding(context, bottomExtra: 24),
         children: [
           _buildSection('Datos del Negocio', Icons.store_rounded, [
             _buildField('Nombre del negocio', _nombreCtrl, Icons.business),
@@ -215,86 +164,66 @@ class _AjustesScreenState extends State<AjustesScreen> {
           ]),
           const SizedBox(height: 16),
 
-          _buildSection('Suscripción y Nube', Icons.cloud_done_rounded, [
-            ListTile(
-              leading: const Icon(Icons.star, color: Colors.amber),
-              title: const Text(
-                'Plan Actual',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              subtitle: Text(
-                _planActivo == PlanType.nube
-                    ? 'Plan Nube (Sincronizado)'
-                    : (_planActivo == PlanType.local
-                          ? 'Plan Local (Offline)'
-                          : 'Periodo de Prueba'),
-              ),
-              trailing: ElevatedButton(
-                onPressed: _gestionarSuscripcion,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppTheme.primary,
-                  foregroundColor: Colors.white,
-                ),
-                child: const Text('Cambiar'),
-              ),
-            ),
-            if (_planActivo != PlanType.trial)
-              ListTile(
-                leading: Icon(
-                  _planActivo == PlanType.nube
-                      ? Icons.cloud_upload
-                      : Icons.cloud_download,
-                  color: AppTheme.primary,
-                ),
-                title: Text(
-                  _planActivo == PlanType.nube
-                      ? 'Forzar Sincronización'
-                      : 'Desmigrar de la Nube',
-                ),
-                subtitle: const Text(
-                  'Asegura que tus datos estén actualizados',
-                  style: TextStyle(fontSize: 12),
-                ),
-                onTap: _sincronizarDatos,
-              ),
-          ]),
-          const SizedBox(height: 16),
-
           _buildSection(
             'Métodos de Pago',
             Icons.account_balance_wallet_rounded,
             [
-              ListTile(
-                leading: const Icon(
-                  Icons.qr_code_scanner_rounded,
-                  color: Color(0xFF6C2DC7),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Text(
+                  'Activa solo los métodos que aceptas en tu negocio',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.textSecondary.withValues(alpha: 0.9),
+                  ),
                 ),
-                title: const Text(
-                  'QR de Yape',
-                  style: TextStyle(fontWeight: FontWeight.w500),
-                ),
-                subtitle: Text(
-                  _yapeQrPath != null
-                      ? 'Imagen cargada'
-                      : 'Subir imagen del QR',
-                  style: const TextStyle(fontSize: 12),
-                ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_yapeQrPath != null)
-                      IconButton(
-                        icon: const Icon(Icons.delete, color: AppTheme.error),
-                        onPressed: () => setState(() => _yapeQrPath = null),
-                      ),
-                    const Icon(
-                      Icons.upload_file_rounded,
-                      color: AppTheme.primary,
-                    ),
-                  ],
-                ),
-                onTap: _seleccionarQrYape,
               ),
+              for (final metodo in MetodosPagoConfig.todos)
+                SwitchListTile(
+                  secondary: Icon(
+                    MetodosPagoConfig.icons[metodo],
+                    color: MetodosPagoConfig.colors[metodo],
+                  ),
+                  title: Text(
+                    MetodosPagoConfig.label(metodo),
+                    style: const TextStyle(fontWeight: FontWeight.w500),
+                  ),
+                  value: _metodosHabilitados.contains(metodo),
+                  onChanged: (on) {
+                    setState(() {
+                      if (on) {
+                        if (!_metodosHabilitados.contains(metodo)) {
+                          _metodosHabilitados.add(metodo);
+                        }
+                      } else if (_metodosHabilitados.length > 1) {
+                        _metodosHabilitados.remove(metodo);
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'Debe haber al menos un método de pago activo',
+                            ),
+                            backgroundColor: AppTheme.warning,
+                          ),
+                        );
+                      }
+                    });
+                  },
+                ),
+              if (_metodosHabilitados.contains('yape'))
+                _buildQrTile(
+                  metodo: 'yape',
+                  path: _yapeQrPath,
+                  onSelect: () => _seleccionarQr('yape'),
+                  onDelete: () => setState(() => _yapeQrPath = null),
+                ),
+              if (_metodosHabilitados.contains('plin'))
+                _buildQrTile(
+                  metodo: 'plin',
+                  path: _plinQrPath,
+                  onSelect: () => _seleccionarQr('plin'),
+                  onDelete: () => setState(() => _plinQrPath = null),
+                ),
             ],
           ),
           const SizedBox(height: 16),
@@ -434,6 +363,38 @@ class _AjustesScreenState extends State<AjustesScreen> {
               onTap: _buscarImpresoras,
             ),
           ], collapsible: false),
+          const SizedBox(height: 16),
+
+          _buildSection('Soporte', Icons.support_agent_rounded, [
+            ListTile(
+              leading: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF25D366).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(
+                  Icons.chat_rounded,
+                  color: Color(0xFF25D366),
+                  size: 20,
+                ),
+              ),
+              title: const Text(
+                'Edax Agency',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              subtitle: const Text(
+                'WhatsApp +51 973 282 798 · Versión Pro+',
+                style: TextStyle(fontSize: 12),
+              ),
+              trailing: const Icon(
+                Icons.chevron_right,
+                color: AppTheme.textMuted,
+              ),
+              onTap: () => showSoporteDialog(context),
+            ),
+          ]),
           const SizedBox(height: 24),
 
           SizedBox(
@@ -447,31 +408,6 @@ class _AjustesScreenState extends State<AjustesScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 16),
-          SizedBox(
-            height: 52,
-            child: OutlinedButton.icon(
-              onPressed: () async {
-                await AuthService.signOut();
-                if (mounted) {
-                  Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(builder: (_) => const BienvenidaScreen()),
-                    (route) => false,
-                  );
-                }
-              },
-              icon: const Icon(Icons.logout, color: AppTheme.error),
-              label: const Text(
-                'Cerrar Sesión',
-                style: TextStyle(fontSize: 15, color: AppTheme.error),
-              ),
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: AppTheme.error),
-              ),
-            ),
-          ),
-          SizedBox(height: MediaQuery.of(context).padding.bottom + 24),
         ],
       ),
     );
@@ -548,21 +484,60 @@ class _AjustesScreenState extends State<AjustesScreen> {
     );
   }
 
-  Future<void> _seleccionarQrYape() async {
-    final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+  Widget _buildQrTile({
+    required String metodo,
+    required String? path,
+    required VoidCallback onSelect,
+    required VoidCallback onDelete,
+  }) {
+    final color = MetodosPagoConfig.colors[metodo]!;
+    final label = MetodosPagoConfig.label(metodo);
+    return ListTile(
+      leading: Icon(Icons.qr_code_scanner_rounded, color: color),
+      title: Text(
+        'QR de $label',
+        style: const TextStyle(fontWeight: FontWeight.w500),
+      ),
+      subtitle: Text(
+        path != null ? 'Imagen cargada' : 'Subir imagen del QR',
+        style: const TextStyle(fontSize: 12),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (path != null)
+            IconButton(
+              icon: const Icon(Icons.delete, color: AppTheme.error),
+              onPressed: onDelete,
+            ),
+          const Icon(Icons.upload_file_rounded, color: AppTheme.primary),
+        ],
+      ),
+      onTap: onSelect,
+    );
+  }
 
-    if (image != null) {
-      setState(() {
+  Future<void> _seleccionarQr(String metodo) async {
+    final picker = ImagePicker();
+    final image = await picker.pickImage(source: ImageSource.gallery);
+    if (image == null || !mounted) return;
+
+    setState(() {
+      if (metodo == 'yape') {
         _yapeQrPath = image.path;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('✓ Imagen QR cargada correctamente'),
-          backgroundColor: AppTheme.success,
+      } else if (metodo == 'plin') {
+        _plinQrPath = image.path;
+      }
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          '✓ QR de ${MetodosPagoConfig.label(metodo)} cargado correctamente',
         ),
-      );
-    }
+        backgroundColor: AppTheme.success,
+      ),
+    );
   }
 
   Future<void> _agregarVendedor() async {
@@ -825,6 +800,7 @@ class _AjustesScreenState extends State<AjustesScreen> {
     _telefonoCtrl.dispose();
     _rucCtrl.dispose();
     _mensajeCtrl.dispose();
+    _monedaSimboloCtrl.dispose();
     super.dispose();
   }
 }

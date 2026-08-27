@@ -1,8 +1,11 @@
+import 'dart:convert';
 import 'package:intl/intl.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/venta.dart';
 import '../utils/currency_formatter.dart';
+import '../utils/peso_formatter.dart';
 
 class PrinterService {
   static final PrinterService instance = PrinterService._();
@@ -19,6 +22,8 @@ class PrinterService {
   String? _impresoraNombre;
   String? _vendedor;
 
+  int get _chars => _anchoPapel == 80.0 ? 48 : 32;
+
   String _stripAccents(String str) {
     return str
         .replaceAll('á', 'a').replaceAll('é', 'e').replaceAll('í', 'i').replaceAll('ó', 'o').replaceAll('ú', 'u')
@@ -26,11 +31,21 @@ class PrinterService {
         .replaceAll('ñ', 'n').replaceAll('Ñ', 'N');
   }
 
-  String _formatMoney(double amount) {
-    return CurrencyFormatter.format(amount, _monedaSimbolo);
-  }
+  String _formatMoney(double amount) =>
+      CurrencyFormatter.format(amount, _monedaSimbolo);
 
-  void configurar({String? nombre, String? direccion, String? telefono, String? ruc, String? mensaje, double? anchoPapel, String? mac, String? printerName, String? moneda, String? vendedor}) {
+  void configurar({
+    String? nombre,
+    String? direccion,
+    String? telefono,
+    String? ruc,
+    String? mensaje,
+    double? anchoPapel,
+    String? mac,
+    String? printerName,
+    String? moneda,
+    String? vendedor,
+  }) {
     if (nombre != null) _nombreNegocio = nombre;
     if (direccion != null) _direccion = direccion;
     if (telefono != null) _telefono = telefono;
@@ -43,10 +58,139 @@ class PrinterService {
     if (vendedor != null) _vendedor = vendedor;
   }
 
+  Future<void> cargarDesdePrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    configurar(
+      nombre: prefs.getString('negocio_nombre') ?? _nombreNegocio,
+      direccion: prefs.getString('negocio_direccion') ?? '',
+      telefono: prefs.getString('negocio_telefono') ?? '',
+      ruc: prefs.getString('negocio_ruc') ?? '',
+      mensaje: prefs.getString('negocio_mensaje') ?? _mensajePie,
+      anchoPapel: prefs.getDouble('impresora_ancho') ?? 58.0,
+      mac: prefs.getString('impresora_mac'),
+      printerName: prefs.getString('impresora_nombre'),
+      moneda: prefs.getString('moneda_simbolo') ?? 'S/',
+      vendedor: prefs.getString('vendedor_activo'),
+    );
+  }
+
   String? get impresoraNombre => _impresoraNombre;
   String? get impresoraMac => _impresoraMac;
 
+  String _hr() => '-' * _chars;
+
+  String _lr(String left, String right) {
+    if (right.length >= _chars) return right.substring(0, _chars);
+    final maxLeft = _chars - right.length - 1;
+    var l = left;
+    if (l.length > maxLeft) l = l.substring(0, maxLeft);
+    final spaces = _chars - l.length - right.length;
+    return '$l${' ' * spaces}$right';
+  }
+
+  String _metodoPagoLabel(String metodo) {
+    switch (metodo) {
+      case 'efectivo':
+        return 'Efectivo';
+      case 'yape':
+        return 'Yape';
+      case 'plin':
+        return 'Plin';
+      case 'tarjeta':
+        return 'Tarjeta';
+      default:
+        return metodo;
+    }
+  }
+
+  List<String> _lineasCuerpo(Venta venta) {
+    final dateFormat = DateFormat('dd/MM/yyyy HH:mm', 'es');
+    final lines = <String>[];
+    lines.add(_hr());
+    lines.add(_lr(
+      'TICKET DE VENTA',
+      '#${venta.id.substring(0, 8).toUpperCase()}',
+    ));
+    lines.add(_lr('Fecha:', dateFormat.format(venta.fecha)));
+    if (_vendedor != null && _vendedor!.isNotEmpty) {
+      lines.add(_lr('Atendido por:', _vendedor!));
+    }
+    lines.add(_hr());
+    lines.add(_lr('Cant  Producto', 'Total'));
+    lines.add(_hr());
+
+    for (final item in venta.items) {
+      final cant = item.esPeso
+          ? PesoFormatter.formatTicket(item.cantidad)
+          : '${item.cantidad}';
+      final nombre = item.productoNombre;
+      final total = _formatMoney(item.subtotal);
+      final left = '$cant  $nombre';
+      if (left.length + 1 + total.length <= _chars) {
+        lines.add(_lr(left, total));
+      } else {
+        lines.add(_lr(
+          '$cant  ${nombre.length > 18 ? nombre.substring(0, 18) : nombre}',
+          total,
+        ));
+      }
+    }
+
+    lines.add(_hr());
+    if (venta.descuento > 0) {
+      lines.add(_lr('Subtotal:', _formatMoney(venta.subtotal)));
+      lines.add(_lr('Descuento:', '-${_formatMoney(venta.descuento)}'));
+    }
+    lines.add(_lr('TOTAL:', _formatMoney(venta.total)));
+    lines.add(_lr('Pago:', _metodoPagoLabel(venta.metodoPago)));
+    if (venta.montoPagado != null) {
+      lines.add(_lr('Pago con:', _formatMoney(venta.montoPagado!)));
+    }
+    if (venta.vuelto != null && venta.vuelto! > 0) {
+      lines.add(_lr('Vuelto:', _formatMoney(venta.vuelto!)));
+    }
+    lines.add(_hr());
+    return lines;
+  }
+
+  /// Texto plano para WhatsApp (no PDF ni archivo).
+  Future<String> textoTicket(Venta venta) async {
+    await cargarDesdePrefs();
+    final buf = StringBuffer();
+    buf.writeln('*${_nombreNegocio.toUpperCase()}*');
+    if (_ruc.isNotEmpty) buf.writeln('RUC: $_ruc');
+    if (_direccion.isNotEmpty) buf.writeln(_direccion);
+    if (_telefono.isNotEmpty) buf.writeln('Tel: $_telefono');
+    for (final line in _lineasCuerpo(venta)) {
+      buf.writeln(line);
+    }
+    buf.writeln(_mensajePie);
+    buf.writeln('Vende Movil v2.0');
+    return buf.toString().trim();
+  }
+
+  /// Centrado real (ESC a 1). No usa espacios: esos empujan el texto a la derecha.
+  List<int> _bytesCentrado(
+    String texto, {
+    bool grande = false,
+    bool negrita = false,
+  }) {
+    final t = _stripAccents(texto);
+    final bytes = <int>[
+      0x1B, 0x61, 0x01, // ESC a 1 = centrar
+    ];
+    if (negrita) bytes.addAll([0x1B, 0x45, 0x01]);
+    if (grande) bytes.addAll([0x1D, 0x21, 0x11]); // ancho y alto x2
+    bytes.addAll(latin1.encode(t));
+    bytes.add(0x0A);
+    if (grande) bytes.addAll([0x1D, 0x21, 0x00]);
+    if (negrita) bytes.addAll([0x1B, 0x45, 0x00]);
+    bytes.addAll([0x1B, 0x61, 0x00]); // volver a la izquierda
+    return bytes;
+  }
+
   Future<void> imprimirTicket(Venta venta, {String? macOverride}) async {
+    await cargarDesdePrefs();
     final mac = macOverride ?? _impresoraMac;
     if (mac == null || mac.isEmpty) {
       throw Exception('No hay impresora configurada');
@@ -59,117 +203,41 @@ class PrinterService {
     }
 
     final profile = await CapabilityProfile.load();
-    final generator = Generator(_anchoPapel == 80.0 ? PaperSize.mm80 : PaperSize.mm58, profile);
+    final generator = Generator(
+      _anchoPapel == 80.0 ? PaperSize.mm80 : PaperSize.mm58,
+      profile,
+    );
     List<int> bytes = [];
+    bytes += generator.reset();
+    bytes += generator.setGlobalFont(PosFontType.fontA);
 
-    // Formato de fecha
-    final dateFormat = DateFormat('dd/MM/yyyy HH:mm', 'es');
-
-    // Cabecera
-    bytes += generator.text(_stripAccents(_nombreNegocio), styles: const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2));
-    if (_ruc.isNotEmpty) bytes += generator.text('RUC: $_ruc', styles: const PosStyles(align: PosAlign.center));
-    if (_direccion.isNotEmpty) bytes += generator.text(_stripAccents(_direccion), styles: const PosStyles(align: PosAlign.center));
-    if (_telefono.isNotEmpty) bytes += generator.text('Tel: $_telefono', styles: const PosStyles(align: PosAlign.center));
-    
-    bytes += generator.emptyLines(1);
-    bytes += generator.hr();
-    
-    // Info venta
-    bytes += generator.row([
-      PosColumn(text: 'Boleta', width: 6),
-      PosColumn(text: '#${venta.id.substring(0, 8).toUpperCase()}', width: 6, styles: const PosStyles(align: PosAlign.right)),
-    ]);
-    bytes += generator.row([
-      PosColumn(text: 'Fecha', width: 6),
-      PosColumn(text: dateFormat.format(venta.fecha), width: 6, styles: const PosStyles(align: PosAlign.right)),
-    ]);
-    if (_vendedor != null && _vendedor!.isNotEmpty) {
-      bytes += generator.row([
-        PosColumn(text: 'Atendido por', width: 6),
-        PosColumn(text: _vendedor!, width: 6, styles: const PosStyles(align: PosAlign.right)),
-      ]);
+    bytes += _bytesCentrado(
+      _nombreNegocio.toUpperCase(),
+      grande: true,
+      negrita: true,
+    );
+    if (_ruc.isNotEmpty) {
+      bytes += _bytesCentrado('RUC: $_ruc');
     }
-    
-    bytes += generator.hr();
-
-    // Items Header - Ajustando el tamaño para mejor legibilidad
-    bytes += generator.row([
-      PosColumn(text: 'Cant', width: 2, styles: const PosStyles(bold: true, align: PosAlign.left)),
-      PosColumn(text: 'Producto', width: 6, styles: const PosStyles(bold: true, align: PosAlign.left)),
-      PosColumn(text: 'Total', width: 4, styles: const PosStyles(bold: true, align: PosAlign.right)),
-    ]);
-    bytes += generator.hr(ch: '-');
-
-    // Items
-    for (var item in venta.items) {
-      String prod = _stripAccents(item.productoNombre);
-      if (prod.length > 14) prod = prod.substring(0, 14);
-
-      bytes += generator.row([
-        PosColumn(text: '${item.cantidad}', width: 2, styles: const PosStyles(align: PosAlign.left)),
-        PosColumn(text: prod, width: 6, styles: const PosStyles(align: PosAlign.left)),
-        PosColumn(text: _formatMoney(item.subtotal), width: 4, styles: const PosStyles(align: PosAlign.right)),
-      ]);
-      // Imprimir el PU debajo si se desea mayor detalle, o simplemente omitirlo para mantenerlo limpio
+    if (_direccion.isNotEmpty) {
+      bytes += _bytesCentrado(_direccion);
     }
-    
-    bytes += generator.hr();
-    
-    // Totales
-    if (venta.descuento > 0) {
-      bytes += generator.row([
-        PosColumn(text: 'Subtotal:', width: 6),
-        PosColumn(text: _formatMoney(venta.subtotal), width: 6, styles: const PosStyles(align: PosAlign.right)),
-      ]);
-      bytes += generator.row([
-        PosColumn(text: 'Descuento:', width: 6),
-        PosColumn(text: '-${_formatMoney(venta.descuento)}', width: 6, styles: const PosStyles(align: PosAlign.right)),
-      ]);
-    }
-    
-    bytes += generator.row([
-      PosColumn(text: 'TOTAL:', width: 6, styles: const PosStyles(bold: true)),
-      PosColumn(text: _formatMoney(venta.total), width: 6, styles: const PosStyles(bold: true, align: PosAlign.right)),
-    ]);
-    
-    bytes += generator.emptyLines(1);
-    bytes += generator.row([
-      PosColumn(text: 'Pago:', width: 6),
-      PosColumn(text: _metodoPagoLabel(venta.metodoPago), width: 6, styles: const PosStyles(align: PosAlign.right)),
-    ]);
-    
-    if (venta.montoPagado != null) {
-      bytes += generator.row([
-        PosColumn(text: 'Pago con:', width: 6),
-        PosColumn(text: _formatMoney(venta.montoPagado!), width: 6, styles: const PosStyles(align: PosAlign.right)),
-      ]);
-    }
-    if (venta.vuelto != null && venta.vuelto! > 0) {
-      bytes += generator.row([
-        PosColumn(text: 'Vuelto:', width: 6),
-        PosColumn(text: _formatMoney(venta.vuelto!), width: 6, styles: const PosStyles(align: PosAlign.right)),
-      ]);
+    if (_telefono.isNotEmpty) {
+      bytes += _bytesCentrado('Tel: $_telefono');
     }
 
-    bytes += generator.emptyLines(1);
-    bytes += generator.hr(ch: '-');
-    bytes += generator.text(_stripAccents(_mensajePie), styles: const PosStyles(align: PosAlign.center, bold: true));
-    bytes += generator.text('Vende Movil v1.0', styles: const PosStyles(align: PosAlign.center));
-    
+    const izquierda = PosStyles(align: PosAlign.left);
+    for (final line in _lineasCuerpo(venta)) {
+      bytes += generator.text(_stripAccents(line), styles: izquierda);
+    }
+
+    bytes += _bytesCentrado(_mensajePie);
+    bytes += _bytesCentrado('Vende Movil v2.0');
+
     bytes += generator.feed(2);
     bytes += generator.cut();
 
     await PrintBluetoothThermal.writeBytes(bytes);
-  }
-
-  String _metodoPagoLabel(String metodo) {
-    switch (metodo) {
-      case 'efectivo': return 'Efectivo';
-      case 'yape': return 'Yape';
-      case 'plin': return 'Plin';
-      case 'tarjeta': return 'Tarjeta';
-      default: return metodo;
-    }
   }
 
   Future<List<BluetoothInfo>> obtenerImpresoras() async {

@@ -1,4 +1,4 @@
-package com.vendemas.vendemas
+package com.vendemovil
 
 import io.flutter.embedding.android.FlutterActivity
 

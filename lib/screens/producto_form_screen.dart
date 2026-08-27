@@ -3,8 +3,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import '../theme/app_theme.dart';
+import '../utils/safe_area_padding.dart';
 import '../models/producto.dart';
 import '../services/database_service.dart';
+import '../utils/peso_formatter.dart';
 import 'scanner_screen.dart';
 
 class ProductoFormScreen extends StatefulWidget {
@@ -30,6 +32,7 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
   String? _imagenUrl;
   bool _isEditing = false;
   bool _saving = false;
+  String _tipoVenta = TipoVenta.unidad;
 
   @override
   void initState() {
@@ -41,8 +44,21 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
     _descripcionCtrl = TextEditingController(text: p?.descripcion ?? '');
     _precioCompraCtrl = TextEditingController(text: p != null ? p.precioCompra.toStringAsFixed(2) : '');
     _precioVentaCtrl = TextEditingController(text: p != null ? p.precioVenta.toStringAsFixed(2) : '');
-    _stockCtrl = TextEditingController(text: p != null ? '${p.stock}' : '');
-    _stockMinimoCtrl = TextEditingController(text: p != null ? '${p.stockMinimo}' : '5');
+    _tipoVenta = p?.tipoVenta ?? TipoVenta.unidad;
+    _stockCtrl = TextEditingController(
+      text: p == null
+          ? ''
+          : p.esPeso
+              ? PesoFormatter.kgInputFromGrams(p.stock)
+              : '${p.stock}',
+    );
+    _stockMinimoCtrl = TextEditingController(
+      text: p == null
+          ? '5'
+          : p.esPeso
+              ? PesoFormatter.kgInputFromGrams(p.stockMinimo)
+              : '${p.stockMinimo}',
+    );
     _categoriaSeleccionada = p?.categoria;
     _imagenUrl = p?.imagenUrl;
     _cargarCategorias();
@@ -77,6 +93,24 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
     }
   }
 
+  void _cambiarTipo(String tipo) {
+    if (tipo == _tipoVenta) return;
+    setState(() {
+      _tipoVenta = tipo;
+      if (!_isEditing) {
+        _stockCtrl.clear();
+        _stockMinimoCtrl.text = tipo == TipoVenta.peso ? '1' : '5';
+      }
+    });
+  }
+
+  int _parseStock(String text) {
+    if (_tipoVenta == TipoVenta.peso) {
+      return PesoFormatter.parseToGrams(text, enKg: true);
+    }
+    return int.tryParse(text.trim()) ?? 0;
+  }
+
   Future<void> _guardar() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
@@ -89,8 +123,14 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
         categoria: _categoriaSeleccionada,
         precioCompra: double.tryParse(_precioCompraCtrl.text) ?? 0,
         precioVenta: double.parse(_precioVentaCtrl.text),
-        stock: int.tryParse(_stockCtrl.text) ?? 0,
-        stockMinimo: int.tryParse(_stockMinimoCtrl.text) ?? 5,
+        stock: _parseStock(_stockCtrl.text),
+        stockMinimo: _tipoVenta == TipoVenta.peso
+            ? PesoFormatter.parseToGrams(
+                _stockMinimoCtrl.text.isEmpty ? '0' : _stockMinimoCtrl.text,
+                enKg: true,
+              )
+            : int.tryParse(_stockMinimoCtrl.text) ?? 5,
+        tipoVenta: _tipoVenta,
         imagenUrl: _imagenUrl,
         fechaCreacion: widget.producto?.fechaCreacion,
       );
@@ -200,7 +240,10 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
                               child: const Icon(Icons.inventory_2_outlined, color: AppTheme.primary, size: 20),
                             ),
                             title: Text(p.nombre, style: const TextStyle(fontWeight: FontWeight.w600)),
-                            subtitle: Text('Stock: ${p.stock} | Cód: ${p.codigoBarras.split(',').first}..', style: const TextStyle(fontSize: 12)),
+                            subtitle: Text(
+                              '${p.formatoStock} | Cód: ${p.codigoBarras.split(',').first}..',
+                              style: const TextStyle(fontSize: 12),
+                            ),
                             trailing: const Icon(Icons.link, color: AppTheme.primary),
                             onTap: () async {
                               Navigator.pop(ctx);
@@ -250,7 +293,7 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
       body: Form(
         key: _formKey,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: listBottomPadding(context, bottomExtra: 20),
           children: [
             Center(
               child: GestureDetector(
@@ -287,11 +330,16 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
                 Expanded(
                   child: TextFormField(
                     controller: _codigoCtrl,
-                    decoration: const InputDecoration(
-                      hintText: 'Ej: 7750... o varios separados por coma', 
-                      prefixIcon: Icon(Icons.qr_code)
+                    decoration: InputDecoration(
+                      hintText: _tipoVenta == TipoVenta.peso
+                          ? 'Opcional (no se vende con escáner)'
+                          : 'Ej: 7750... o varios separados por coma',
+                      prefixIcon: const Icon(Icons.qr_code),
                     ),
-                    validator: (v) => v == null || v.isEmpty ? 'Ingresa el código' : null,
+                    validator: (v) {
+                      if (_tipoVenta == TipoVenta.peso) return null;
+                      return v == null || v.isEmpty ? 'Ingresa el código' : null;
+                    },
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -345,13 +393,34 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
             ),
             const SizedBox(height: 20),
 
+            _buildLabel('Se vende por'),
+            SegmentedButton<String>(
+              segments: const [
+                ButtonSegment(
+                  value: TipoVenta.unidad,
+                  label: Text('Unidad'),
+                  icon: Icon(Icons.inventory_2_outlined, size: 18),
+                ),
+                ButtonSegment(
+                  value: TipoVenta.peso,
+                  label: Text('Kilos'),
+                  icon: Icon(Icons.scale_outlined, size: 18),
+                ),
+              ],
+              selected: {_tipoVenta},
+              onSelectionChanged: (s) => _cambiarTipo(s.first),
+            ),
+            const SizedBox(height: 20),
+
             Row(
               children: [
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _buildLabel('Precio Compra (S/)'),
+                      _buildLabel(_tipoVenta == TipoVenta.peso
+                          ? 'Precio Compra (S/ por kg)'
+                          : 'Precio Compra (S/)'),
                       TextFormField(
                         controller: _precioCompraCtrl,
                         decoration: const InputDecoration(hintText: '0.00', prefixIcon: Icon(Icons.money_off_outlined)),
@@ -365,7 +434,9 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _buildLabel('Precio Venta (S/)'),
+                      _buildLabel(_tipoVenta == TipoVenta.peso
+                          ? 'Precio Venta (S/ por kg)'
+                          : 'Precio Venta (S/)'),
                       TextFormField(
                         controller: _precioVentaCtrl,
                         decoration: const InputDecoration(hintText: '0.00', prefixIcon: Icon(Icons.attach_money)),
@@ -385,12 +456,24 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _buildLabel('Stock Actual'),
+                      _buildLabel(_tipoVenta == TipoVenta.peso
+                          ? 'Stock Actual (kg)'
+                          : 'Stock Actual'),
                       TextFormField(
                         controller: _stockCtrl,
-                        decoration: const InputDecoration(hintText: '0', prefixIcon: Icon(Icons.numbers)),
-                        keyboardType: TextInputType.number,
-                        validator: (v) => v == null || v.isEmpty ? 'Requerido' : null,
+                        decoration: InputDecoration(
+                          hintText: _tipoVenta == TipoVenta.peso ? '0.000' : '0',
+                          prefixIcon: const Icon(Icons.numbers),
+                        ),
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        validator: (v) {
+                          if (v == null || v.isEmpty) return 'Requerido';
+                          if (_tipoVenta == TipoVenta.peso) {
+                            final n = double.tryParse(v.replaceAll(',', '.'));
+                            if (n == null || n < 0) return 'Kg inválido';
+                          }
+                          return null;
+                        },
                       ),
                     ],
                   ),
@@ -400,11 +483,16 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _buildLabel('Stock Mínimo'),
+                      _buildLabel(_tipoVenta == TipoVenta.peso
+                          ? 'Stock Mínimo (kg)'
+                          : 'Stock Mínimo'),
                       TextFormField(
                         controller: _stockMinimoCtrl,
-                        decoration: const InputDecoration(hintText: '5', prefixIcon: Icon(Icons.warning_amber)),
-                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          hintText: _tipoVenta == TipoVenta.peso ? '1' : '5',
+                          prefixIcon: const Icon(Icons.warning_amber),
+                        ),
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       ),
                     ],
                   ),
@@ -423,7 +511,6 @@ class _ProductoFormScreenState extends State<ProductoFormScreen> {
                 label: Text(_saving ? 'Guardando...' : (_isEditing ? 'Actualizar Producto' : 'Guardar Producto')),
               ),
             ),
-            SizedBox(height: MediaQuery.of(context).padding.bottom + 20),
           ],
         ),
       ),

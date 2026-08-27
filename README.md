@@ -1,33 +1,42 @@
-# vendemovilApp (Vende Más)
+# Vende Móvil
 
-App Flutter POS: escáner de código de barras, impresión térmica, sync con backend y Firebase Auth.
+POS Flutter (Android + iOS): venta por unidad o kilos, escáner, tickets térmicos y WhatsApp.
 
-## Configuración local
+**Versión:** 2.0.0+2  
+**Bundle / applicationId:** `com.vendemovil`
 
-### Firebase
+App 100% local en el dispositivo. Sin Firebase ni servidor.
 
-1. Instala FlutterFire CLI: `dart pub global activate flutterfire_cli`
-2. Ejecuta `flutterfire configure` en la raíz del proyecto  
-   O copia los ejemplos y rellena tus valores:
-   - `lib/firebase_options.example.dart` → `lib/firebase_options.dart`
-   - `android/app/google-services.json.example` → `android/app/google-services.json`
-   - `firebase.json.example` → `firebase.json`
+## Codemagic (iOS)
 
-### API del backend (VPS)
+1. En [Codemagic](https://codemagic.io) conecta el repo [rossellmestanza/vendemovilApp](https://github.com/rossellmestanza/vendemovilApp).
+2. Usa el archivo `codemagic.yaml` de la raíz.
+3. Workflows:
+   - **iOS Compile (sin firmar):** comprueba que el proyecto compile.
+   - **iOS IPA App Store:** genera el `.ipa` firmado.
+4. Para el IPA, en Codemagic → **Code signing identities**:
+   - Conecta tu cuenta de Apple Developer.
+   - Bundle ID: `com.vendemovil`
+   - Distribution: App Store
+5. Crea el App ID `com.vendemovil` en [Apple Developer](https://developer.apple.com) si aún no existe.
 
-Por defecto apunta a `http://localhost:3000`. Para tu servidor:
-
-```bash
-flutter run --dart-define=API_BASE_URL=http://TU_SERVIDOR:3000
-```
-
-### Dependencias
+## Local
 
 ```bash
 flutter pub get
 flutter run
 ```
 
-## Archivos que no van al repositorio
+Android release (con `android/key.properties` y el `.jks` locales, no van al repo):
 
-Claves privadas (`.pem`), `google-services.json`, `firebase_options.dart`, `firebase.json` y `.env` están en `.gitignore`. Mantén copias locales seguras.
+```bash
+flutter build apk --release
+```
+
+## Permisos iOS
+
+Cámara (escáner), fotos (QR Yape/Plin), Bluetooth (impresora) y ubicación para BLE.
+
+## Secretos
+
+No se suben: `key.properties`, keystores, `.env`, `google-services.json`.

@@ -1,24 +1,16 @@
 const express = require('express');
 const sqlite3 = require('sqlite3').verbose();
 const cors = require('cors');
-const bodyParser = require('body-parser');
 const path = require('path');
-const admin = require('firebase-admin');
-
-// Initialize Firebase Admin (Needs service account JSON in production for push)
-// Since we don't have the service account yet, we initialize it without credentials 
-// to avoid crashes, or instruct the user to provide it later.
-try {
-    admin.initializeApp();
-} catch(e) {
-    console.log('Firebase Admin init error: ', e);
-}
+const crypto = require('crypto');
 
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
+
+const GOOGLE_PASSWORD_MARKER = 'firebase:google';
 
 app.use(cors());
-app.use(bodyParser.json({ limit: '50mb' })); // Allow large payloads for sync
+app.use(express.json({ limit: '50mb' }));
 
 const dbPath = path.join(__dirname, 'vendemas-cloud.db');
 const db = new sqlite3.Database(dbPath, (err) => {
@@ -26,209 +18,196 @@ const db = new sqlite3.Database(dbPath, (err) => {
         console.error('Error opening database', err.message);
     } else {
         console.log('Connected to the SQLite database.');
-        // Initialize tables based on Flutter's structure
         db.serialize(() => {
             db.run(`CREATE TABLE IF NOT EXISTS users (
                 email TEXT PRIMARY KEY,
+                password_hash TEXT NOT NULL,
                 name TEXT,
-                plan TEXT,
-                fcm_token TEXT,
+                negocio TEXT,
+                auth_provider TEXT DEFAULT 'email',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )`);
-            
-            db.run(`CREATE TABLE IF NOT EXISTS productos (
-                id TEXT PRIMARY KEY,
-                user_email TEXT,
-                codigo_barras TEXT NOT NULL, 
-                nombre TEXT NOT NULL,
-                descripcion TEXT, 
-                categoria TEXT, 
-                precio_compra REAL NOT NULL DEFAULT 0,
-                precio_venta REAL NOT NULL, 
-                stock INTEGER NOT NULL DEFAULT 0,
-                stock_minimo INTEGER NOT NULL DEFAULT 5, 
-                imagen_url TEXT,
-                fecha_creacion TEXT NOT NULL, 
-                fecha_actualizacion TEXT NOT NULL
-            )`);
 
-            db.run(`CREATE TABLE IF NOT EXISTS ventas (
-                id TEXT PRIMARY KEY, 
-                user_email TEXT,
-                subtotal REAL NOT NULL, 
-                descuento REAL NOT NULL DEFAULT 0,
-                total REAL NOT NULL, 
-                metodo_pago TEXT NOT NULL, 
-                monto_pagado REAL,
-                vuelto REAL, 
-                fecha TEXT NOT NULL, 
-                nota TEXT
-            )`);
-
-            db.run(`CREATE TABLE IF NOT EXISTS items_venta (
-                id TEXT PRIMARY KEY, 
-                user_email TEXT,
-                venta_id TEXT NOT NULL, 
-                producto_id TEXT NOT NULL,
-                producto_nombre TEXT NOT NULL, 
-                codigo_barras TEXT, 
-                precio_unitario REAL NOT NULL,
-                precio_compra REAL NOT NULL DEFAULT 0, 
-                cantidad INTEGER NOT NULL,
-                subtotal REAL NOT NULL, 
-                imagen_url TEXT
-            )`);
-
-            db.run(`CREATE TABLE IF NOT EXISTS categorias (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                user_email TEXT,
-                nombre TEXT NOT NULL
-            )`);
+            db.run(`ALTER TABLE users ADD COLUMN password_hash TEXT`, () => {});
+            db.run(`ALTER TABLE users ADD COLUMN negocio TEXT`, () => {});
+            db.run(`ALTER TABLE users ADD COLUMN auth_provider TEXT DEFAULT 'email'`, () => {});
         });
     }
 });
 
-// Middleware to extract user_email
-const requireUser = (req, res, next) => {
-    const userEmail = req.headers['x-user-email'];
-    if (!userEmail) {
-        return res.status(401).json({ error: 'Missing x-user-email header' });
+function hashPassword(password) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+    return `${salt}:${hash}`;
+}
+
+function verifyPassword(password, stored) {
+    if (!stored || !stored.includes(':')) return false;
+    const [salt, hash] = stored.split(':');
+    const test = crypto.scryptSync(password, salt, 64).toString('hex');
+    return hash === test;
+}
+
+function isValidEmail(email) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+function normalizeEmail(email) {
+    return email.trim().toLowerCase();
+}
+
+/** Registro legacy (email + password en VPS). */
+app.post('/api/auth/register', (req, res) => {
+    const email = req.body?.email;
+    const password = req.body?.password;
+    const name = req.body?.name;
+    const negocio = req.body?.negocio;
+
+    if (!email || !password || !name || !negocio) {
+        return res.status(400).json({ error: 'Faltan campos obligatorios' });
     }
-    req.userEmail = userEmail;
-    next();
-};
 
-app.post('/api/sync/upload', requireUser, (req, res) => {
-    const userEmail = req.userEmail;
-    const { productos, ventas, items_venta, categorias } = req.body;
+    if (!isValidEmail(email)) {
+        return res.status(400).json({ error: 'Correo electrónico inválido' });
+    }
 
-    db.serialize(() => {
-        db.run('BEGIN TRANSACTION');
+    if (password.length < 6) {
+        return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+    }
 
-        // Optional: clear existing data for this user before upload to ensure full sync
-        db.run(`DELETE FROM productos WHERE user_email = ?`, [userEmail]);
-        db.run(`DELETE FROM ventas WHERE user_email = ?`, [userEmail]);
-        db.run(`DELETE FROM items_venta WHERE user_email = ?`, [userEmail]);
-        db.run(`DELETE FROM categorias WHERE user_email = ?`, [userEmail]);
+    const passwordHash = hashPassword(password);
+    const normalized = normalizeEmail(email);
 
-        if (productos && productos.length > 0) {
-            const stmt = db.prepare(`INSERT INTO productos (id, user_email, codigo_barras, nombre, descripcion, categoria, precio_compra, precio_venta, stock, stock_minimo, imagen_url, fecha_creacion, fecha_actualizacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-            productos.forEach(p => stmt.run(p.id, userEmail, p.codigo_barras, p.nombre, p.descripcion, p.categoria, p.precio_compra, p.precio_venta, p.stock, p.stock_minimo, p.imagen_url, p.fecha_creacion, p.fecha_actualizacion));
-            stmt.finalize();
-        }
-
-        if (ventas && ventas.length > 0) {
-            const stmt = db.prepare(`INSERT INTO ventas (id, user_email, subtotal, descuento, total, metodo_pago, monto_pagado, vuelto, fecha, nota) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-            ventas.forEach(v => stmt.run(v.id, userEmail, v.subtotal, v.descuento, v.total, v.metodo_pago, v.monto_pagado, v.vuelto, v.fecha, v.nota));
-            stmt.finalize();
-        }
-
-        if (items_venta && items_venta.length > 0) {
-            const stmt = db.prepare(`INSERT INTO items_venta (id, user_email, venta_id, producto_id, producto_nombre, codigo_barras, precio_unitario, precio_compra, cantidad, subtotal, imagen_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-            items_venta.forEach(i => stmt.run(i.id, userEmail, i.venta_id, i.producto_id, i.producto_nombre, i.codigo_barras, i.precio_unitario, i.precio_compra, i.cantidad, i.subtotal, i.imagen_url));
-            stmt.finalize();
-        }
-
-        if (categorias && categorias.length > 0) {
-            const stmt = db.prepare(`INSERT INTO categorias (user_email, nombre) VALUES (?, ?)`);
-            categorias.forEach(c => stmt.run(userEmail, c.nombre));
-            stmt.finalize();
-        }
-
-        db.run('COMMIT', (err) => {
+    db.run(
+        `INSERT INTO users (email, password_hash, name, negocio, auth_provider) VALUES (?, ?, ?, ?, 'email')`,
+        [normalized, passwordHash, name.trim(), negocio.trim()],
+        function (err) {
             if (err) {
-                console.error(err);
-                res.status(500).json({ error: 'Sync upload failed' });
-            } else {
-                res.json({ message: 'Sync upload successful' });
+                if (err.message.includes('UNIQUE')) {
+                    return res.status(409).json({ error: 'Este correo ya está registrado' });
+                }
+                console.error('Register error:', err);
+                return res.status(500).json({ error: 'Error al registrar la cuenta' });
             }
-        });
-    });
-});
 
-app.get('/api/sync/download', requireUser, (req, res) => {
-    const userEmail = req.userEmail;
-    
-    const result = {};
-    
-    db.serialize(() => {
-        db.all(`SELECT * FROM productos WHERE user_email = ?`, [userEmail], (err, rows) => {
-            result.productos = rows || [];
-            
-            db.all(`SELECT * FROM ventas WHERE user_email = ?`, [userEmail], (err, rows) => {
-                result.ventas = rows || [];
-                
-                db.all(`SELECT * FROM items_venta WHERE user_email = ?`, [userEmail], (err, rows) => {
-                    result.items_venta = rows || [];
-                    
-                    db.all(`SELECT * FROM categorias WHERE user_email = ?`, [userEmail], (err, rows) => {
-                        result.categorias = rows || [];
-                        res.json(result);
-                    });
-                });
+            res.status(201).json({
+                message: 'Cuenta creada',
+                email: normalized,
+                name: name.trim(),
+                negocio: negocio.trim(),
             });
-        });
-    });
+        }
+    );
 });
 
-app.delete('/api/sync/delete', requireUser, (req, res) => {
-    const userEmail = req.userEmail;
+/** Sincroniza cuenta Firebase → VPS (crear o actualizar). */
+app.post('/api/auth/sync', (req, res) => {
+    const email = req.body?.email;
+    const name = req.body?.name;
+    const negocio = req.body?.negocio;
+    const authProvider = req.body?.auth_provider || 'email';
+    const password = req.body?.password;
 
-    db.serialize(() => {
-        db.run('BEGIN TRANSACTION');
-        db.run(`DELETE FROM productos WHERE user_email = ?`, [userEmail]);
-        db.run(`DELETE FROM ventas WHERE user_email = ?`, [userEmail]);
-        db.run(`DELETE FROM items_venta WHERE user_email = ?`, [userEmail]);
-        db.run(`DELETE FROM categorias WHERE user_email = ?`, [userEmail]);
-        db.run('COMMIT', (err) => {
+    if (!email || !name || !negocio) {
+        return res.status(400).json({ error: 'Faltan campos obligatorios' });
+    }
+
+    if (!isValidEmail(email)) {
+        return res.status(400).json({ error: 'Correo electrónico inválido' });
+    }
+
+    const normalized = normalizeEmail(email);
+    const provider = authProvider === 'google' ? 'google' : 'email';
+    const passwordHash =
+        provider === 'google'
+            ? GOOGLE_PASSWORD_MARKER
+            : password && password.length >= 6
+              ? hashPassword(password)
+              : GOOGLE_PASSWORD_MARKER;
+
+    db.run(
+        `INSERT INTO users (email, password_hash, name, negocio, auth_provider)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(email) DO UPDATE SET
+           name = excluded.name,
+           negocio = excluded.negocio,
+           auth_provider = excluded.auth_provider,
+           password_hash = CASE
+             WHEN excluded.auth_provider = 'email' AND excluded.password_hash != ? THEN excluded.password_hash
+             ELSE users.password_hash
+           END`,
+        [normalized, passwordHash, name.trim(), negocio.trim(), provider, GOOGLE_PASSWORD_MARKER],
+        function (err) {
             if (err) {
-                console.error(err);
-                res.status(500).json({ error: 'Delete failed' });
-            } else {
-                res.json({ message: 'User data deleted successfully' });
+                console.error('Sync error:', err);
+                return res.status(500).json({ error: 'Error al sincronizar la cuenta' });
             }
-        });
-    });
+
+            res.status(200).json({
+                message: 'Cuenta sincronizada',
+                email: normalized,
+                name: name.trim(),
+                negocio: negocio.trim(),
+            });
+        }
+    );
 });
 
-app.post('/api/user/token', requireUser, (req, res) => {
-    const userEmail = req.userEmail;
-    const { fcm_token } = req.body;
-    
-    if (!fcm_token) return res.status(400).json({ error: 'Missing fcm_token' });
+app.post('/api/auth/login', (req, res) => {
+    const email = req.body?.email;
+    const password = req.body?.password;
 
-    db.run(`INSERT INTO users (email, fcm_token) VALUES (?, ?) 
-            ON CONFLICT(email) DO UPDATE SET fcm_token = excluded.fcm_token`, 
-    [userEmail, fcm_token], (err) => {
+    if (!email || !password) {
+        return res.status(400).json({ error: 'Correo y contraseña requeridos' });
+    }
+
+    db.get(
+        `SELECT email, password_hash, name, negocio FROM users WHERE email = ?`,
+        [normalizeEmail(email)],
+        (err, row) => {
+            if (err) {
+                console.error('Login error:', err);
+                return res.status(500).json({ error: 'Error al iniciar sesión' });
+            }
+
+            if (!row || row.password_hash === GOOGLE_PASSWORD_MARKER) {
+                return res.status(401).json({ error: 'Usa Firebase o Google para iniciar sesión' });
+            }
+
+            if (!verifyPassword(password, row.password_hash)) {
+                return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
+            }
+
+            res.json({
+                email: row.email,
+                name: row.name,
+                negocio: row.negocio,
+            });
+        }
+    );
+});
+
+/** Elimina la cuenta del VPS por correo. */
+app.delete('/api/auth/account', (req, res) => {
+    const email = req.body?.email;
+
+    if (!email || !isValidEmail(email)) {
+        return res.status(400).json({ error: 'Correo inválido' });
+    }
+
+    const normalized = normalizeEmail(email);
+
+    db.run(`DELETE FROM users WHERE email = ?`, [normalized], function (err) {
         if (err) {
-            console.error('Error saving FCM token:', err);
-            res.status(500).json({ error: 'Failed to save token' });
-        } else {
-            res.json({ message: 'FCM Token saved successfully' });
+            console.error('Delete account error:', err);
+            return res.status(500).json({ error: 'Error al eliminar la cuenta' });
         }
-    });
-});
 
-// Example route to trigger a push notification to a specific user
-app.post('/api/user/notify', async (req, res) => {
-    const { email, title, body } = req.body;
-    if (!email || !title || !body) return res.status(400).json({ error: 'Missing fields' });
+        if (this.changes === 0) {
+            return res.status(404).json({ error: 'Cuenta no encontrada en el servidor' });
+        }
 
-    db.get(`SELECT fcm_token FROM users WHERE email = ?`, [email], async (err, row) => {
-        if (err || !row || !row.fcm_token) {
-            return res.status(404).json({ error: 'User or token not found' });
-        }
-        try {
-            const message = {
-                notification: { title, body },
-                token: row.fcm_token
-            };
-            const response = await admin.messaging().send(message);
-            res.json({ message: 'Push sent', response });
-        } catch (error) {
-            console.error('Error sending push:', error);
-            res.status(500).json({ error: 'Failed to send push' });
-        }
+        res.json({ message: 'Cuenta eliminada del servidor' });
     });
 });
 

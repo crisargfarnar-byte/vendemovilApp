@@ -1,22 +1,24 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:audioplayers/audioplayers.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
 import '../services/database_service.dart';
 import '../providers/carrito_provider.dart';
+import '../utils/safe_area_padding.dart';
 import '../utils/currency_formatter.dart';
+import '../utils/peso_formatter.dart';
+import '../utils/sound_player.dart';
+import '../widgets/safe_bottom_bar.dart';
+import '../widgets/peso_cantidad_dialog.dart';
+import '../models/producto.dart';
+import '../models/venta.dart';
 import 'revisar_orden_screen.dart';
 import 'inventario_screen.dart';
 import 'historial_screen.dart';
 import 'ajustes_screen.dart';
-
-import '../services/subscription_service.dart';
-import '../widgets/subscription_dialog.dart';
 
 class ScannerPosScreen extends StatefulWidget {
   const ScannerPosScreen({super.key});
@@ -32,41 +34,15 @@ class _ScannerPosScreenState extends State<ScannerPosScreen> {
   String? _lastScanned;
   DateTime? _lastScanTime;
   String _monedaSimbolo = 'S/';
-  bool _hasAccess = true;
 
   @override
   void initState() {
     super.initState();
     _cargarAjustes();
-    _checkSubscription();
     _scannerCtrl = MobileScannerController(
       detectionSpeed: DetectionSpeed.normal,
       facing: CameraFacing.back,
     );
-  }
-
-  Future<void> _checkSubscription() async {
-    final hasAccess = await SubscriptionService.hasValidAccess();
-    if (!mounted) return;
-    setState(() => _hasAccess = hasAccess);
-    if (!hasAccess) {
-      final prefs = await SharedPreferences.getInstance();
-      final userEmail = prefs.getString('user_email') ?? '';
-      final userName = prefs.getString('user_name') ?? '';
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (_) => SubscriptionDialog(
-          isBlocking: true,
-          userEmail: userEmail,
-          userName: userName,
-        ),
-      ).then((activated) {
-        if (activated == true) {
-          setState(() => _hasAccess = true);
-        }
-      });
-    }
   }
 
   Future<void> _cargarAjustes() async {
@@ -80,6 +56,62 @@ class _ScannerPosScreenState extends State<ScannerPosScreen> {
 
   String _formatMoney(double amount) {
     return CurrencyFormatter.format(amount, _monedaSimbolo);
+  }
+
+  /// SnackBar flotante en la zona del escáner (arriba), sin tapar botones del carrito.
+  EdgeInsets _margenSnackSuperior(BuildContext context) {
+    final mq = MediaQuery.of(context);
+    return EdgeInsets.fromLTRB(16, mq.padding.top + 56, 16, mq.size.height * 0.52);
+  }
+
+  void _mostrarSnackPos({
+    required Widget content,
+    required Color backgroundColor,
+    Duration duration = const Duration(milliseconds: 1500),
+    SnackBarAction? action,
+  }) {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: content,
+        backgroundColor: backgroundColor,
+        duration: duration,
+        behavior: SnackBarBehavior.floating,
+        margin: _margenSnackSuperior(context),
+        action: action,
+      ),
+    );
+  }
+
+  void _mostrarProductoAgregado(String nombre, double precio) {
+    _mostrarSnackPos(
+      backgroundColor: AppTheme.success,
+      content: Row(
+        children: [
+          const Icon(Icons.check_circle, color: Colors.white, size: 20),
+          const SizedBox(width: 8),
+          Expanded(child: Text('$nombre agregado')),
+          Text(
+            _formatMoney(precio),
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _mostrarStockBajo(String nombre, String stockLabel) {
+    _mostrarSnackPos(
+      backgroundColor: AppTheme.warning,
+      duration: const Duration(seconds: 2),
+      content: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 20),
+          const SizedBox(width: 8),
+          Expanded(child: Text('$nombre — Stock bajo o agotado ($stockLabel)')),
+        ],
+      ),
+    );
   }
 
   Future<void> _navigateTo(Widget screen) async {
@@ -116,73 +148,52 @@ class _ScannerPosScreenState extends State<ScannerPosScreen> {
       return;
     }
 
-    if (producto.stock <= producto.stockMinimo) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const Icon(
-                Icons.warning_amber_rounded,
-                color: Colors.white,
-                size: 20,
-              ),
-              const SizedBox(width: 8),
-              Text(
-                '${producto.nombre} — Stock bajo o agotado (${producto.stock})',
-              ),
-            ],
-          ),
-          backgroundColor: AppTheme.warning,
-          duration: const Duration(seconds: 2),
-        ),
-      );
-      // No retorna, permite agregar
-    }
-
-    HapticFeedback.heavyImpact();
-    try {
-      AudioPlayer().play(AssetSource('sounds/ping.mp3'));
-    } catch (_) {}
-    context.read<CarritoProvider>().agregarProducto(producto);
-    ScaffoldMessenger.of(context).clearSnackBars();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
+    if (producto.esPeso) {
+      _mostrarSnackPos(
+        backgroundColor: AppTheme.warning,
+        duration: const Duration(seconds: 3),
+        content: const Row(
           children: [
-            const Icon(Icons.check_circle, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Expanded(child: Text('${producto.nombre} agregado')),
-            Text(
-              _formatMoney(producto.precioVenta),
-              style: const TextStyle(fontWeight: FontWeight.bold),
+            Icon(Icons.scale_outlined, color: Colors.white, size: 20),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text('Este producto se vende por peso desde el catálogo'),
             ),
           ],
         ),
-        backgroundColor: AppTheme.success,
-        duration: const Duration(milliseconds: 1200),
-      ),
-    );
+      );
+      return;
+    }
+
+    HapticFeedback.heavyImpact();
+    SoundPlayer.ping();
+
+    context.read<CarritoProvider>().agregarProducto(producto);
+
+    if (producto.stock <= producto.stockMinimo) {
+      _mostrarStockBajo(producto.nombre, producto.formatoStock);
+    } else {
+      _mostrarProductoAgregado(producto.nombre, producto.precioVenta);
+    }
   }
 
   void _mostrarProductoNoEncontrado(String code) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.search_off, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Expanded(child: Text('Código $code no encontrado')),
-          ],
-        ),
-        backgroundColor: AppTheme.warning,
-        duration: const Duration(seconds: 3),
-        action: SnackBarAction(
-          label: 'AGREGAR',
-          textColor: Colors.white,
-          onPressed: () {
-            _navigateTo(InventarioScreen(codigoInicial: code));
-          },
-        ),
+    _mostrarSnackPos(
+      backgroundColor: AppTheme.warning,
+      duration: const Duration(seconds: 3),
+      content: Row(
+        children: [
+          const Icon(Icons.search_off, color: Colors.white, size: 20),
+          const SizedBox(width: 8),
+          Expanded(child: Text('Código $code no encontrado')),
+        ],
+      ),
+      action: SnackBarAction(
+        label: 'AGREGAR',
+        textColor: Colors.white,
+        onPressed: () {
+          _navigateTo(InventarioScreen(codigoInicial: code));
+        },
       ),
     );
   }
@@ -218,7 +229,9 @@ class _ScannerPosScreenState extends State<ScannerPosScreen> {
               return matchesQuery && matchesCat;
             }).toList();
 
-            return DraggableScrollableSheet(
+            return SafeArea(
+              top: false,
+              child: DraggableScrollableSheet(
               initialChildSize: 0.85,
               minChildSize: 0.5,
               maxChildSize: 0.95,
@@ -324,11 +337,7 @@ class _ScannerPosScreenState extends State<ScannerPosScreen> {
                               )
                             : GridView.builder(
                                 controller: controller,
-                                padding: const EdgeInsets.all(16).copyWith(
-                                  bottom:
-                                      MediaQuery.of(context).padding.bottom +
-                                      16,
-                                ),
+                                padding: listBottomPadding(context, bottomExtra: 16),
                                 gridDelegate:
                                     const SliverGridDelegateWithFixedCrossAxisCount(
                                       crossAxisCount: 3,
@@ -340,28 +349,7 @@ class _ScannerPosScreenState extends State<ScannerPosScreen> {
                                 itemBuilder: (context, i) {
                                   final p = productosFiltrados[i];
                                   return GestureDetector(
-                                    onTap: () {
-                                      if (p.stock <= p.stockMinimo) {
-                                        ScaffoldMessenger.of(
-                                          context,
-                                        ).showSnackBar(
-                                          SnackBar(
-                                            content: Text(
-                                              '${p.nombre} — Stock bajo (${p.stock})',
-                                            ),
-                                            backgroundColor: AppTheme.warning,
-                                          ),
-                                        );
-                                      }
-                                      HapticFeedback.heavyImpact();
-                                      try {
-                                        AudioPlayer().play(
-                                          AssetSource('sounds/ping.mp3'),
-                                        );
-                                      } catch (_) {}
-                                      carrito.agregarProducto(p);
-                                      Navigator.pop(context);
-                                    },
+                                    onTap: () => _onCatalogTap(context, p, carrito),
                                     child: Container(
                                       decoration: BoxDecoration(
                                         color: AppTheme.bgWhite,
@@ -422,42 +410,36 @@ class _ScannerPosScreenState extends State<ScannerPosScreen> {
                                                     ),
                                                   ),
                                                   const Spacer(),
-                                                  Row(
-                                                    mainAxisAlignment:
-                                                        MainAxisAlignment
-                                                            .spaceBetween,
-                                                    children: [
-                                                      Text(
-                                                        _formatMoney(
-                                                          p.precioVenta,
-                                                        ),
-                                                        style: const TextStyle(
-                                                          fontSize: 12,
-                                                          color:
-                                                              AppTheme.primary,
-                                                          fontWeight:
-                                                              FontWeight.bold,
-                                                        ),
-                                                      ),
-                                                      Text(
-                                                        'Cant: ${p.stock}',
-                                                        style: TextStyle(
-                                                          fontSize: 10,
-                                                          color:
-                                                              p.stock <=
-                                                                  p.stockMinimo
-                                                              ? AppTheme.error
-                                                              : AppTheme
-                                                                    .textSecondary,
-                                                          fontWeight:
-                                                              p.stock <=
-                                                                  p.stockMinimo
-                                                              ? FontWeight.bold
-                                                              : FontWeight
-                                                                    .normal,
-                                                        ),
-                                                      ),
-                                                    ],
+                                                  Text(
+                                                    p.precioLabel(_formatMoney),
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: const TextStyle(
+                                                      fontSize: 11,
+                                                      color: AppTheme.primary,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 2),
+                                                  Text(
+                                                    p.formatoStock,
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: TextStyle(
+                                                      fontSize: 10,
+                                                      color: p.stock <=
+                                                              p.stockMinimo
+                                                          ? AppTheme.error
+                                                          : AppTheme
+                                                                .textSecondary,
+                                                      fontWeight: p.stock <=
+                                                              p.stockMinimo
+                                                          ? FontWeight.bold
+                                                          : FontWeight.normal,
+                                                    ),
                                                   ),
                                                 ],
                                               ),
@@ -474,11 +456,78 @@ class _ScannerPosScreenState extends State<ScannerPosScreen> {
                   ),
                 );
               },
+            ),
             );
           },
         );
       },
     );
+  }
+
+  Future<void> _onCatalogTap(
+    BuildContext catalogContext,
+    Producto p,
+    CarritoProvider carrito,
+  ) async {
+    if (p.esPeso) {
+      final enCarrito = carrito.cantidadEnCarrito(p.id);
+      final disponible = p.stock - enCarrito;
+      if (disponible <= 0) {
+        _mostrarStockBajo(p.nombre, p.formatoStock);
+        return;
+      }
+      final grams = await showPesoCantidadDialog(
+        context: catalogContext,
+        producto: p,
+        monedaSimbolo: _monedaSimbolo,
+        stockDisponible: disponible,
+      );
+      if (grams == null || !mounted) return;
+      HapticFeedback.heavyImpact();
+      SoundPlayer.ping();
+      carrito.agregarProducto(p, cantidad: grams);
+      if (catalogContext.mounted) Navigator.pop(catalogContext);
+      _feedbackProductoAgregado(p);
+      return;
+    }
+
+    HapticFeedback.heavyImpact();
+    SoundPlayer.ping();
+    carrito.agregarProducto(p);
+    if (catalogContext.mounted) Navigator.pop(catalogContext);
+    _feedbackProductoAgregado(p);
+  }
+
+  Future<void> _editarPesoCarrito(int index, ItemVenta item) async {
+    final producto = await _db.obtenerProducto(item.productoId);
+    if (!mounted) return;
+    final stock = producto?.stock ?? item.cantidad;
+    final grams = await showPesoCantidadDialog(
+      context: context,
+      producto: producto ??
+          Producto(
+            id: item.productoId,
+            codigoBarras: item.codigoBarras,
+            nombre: item.productoNombre,
+            precioCompra: item.precioCompra,
+            precioVenta: item.precioUnitario,
+            stock: stock,
+            tipoVenta: TipoVenta.peso,
+          ),
+      monedaSimbolo: _monedaSimbolo,
+      stockDisponible: stock,
+      cantidadInicial: item.cantidad,
+    );
+    if (grams == null || !mounted) return;
+    context.read<CarritoProvider>().actualizarCantidad(index, grams);
+  }
+
+  void _feedbackProductoAgregado(Producto p) {
+    if (p.stock <= p.stockMinimo) {
+      _mostrarStockBajo(p.nombre, p.formatoStock);
+    } else {
+      _mostrarProductoAgregado(p.nombre, p.precioVenta);
+    }
   }
 
   @override
@@ -779,9 +828,11 @@ class _ScannerPosScreenState extends State<ScannerPosScreen> {
                                                 ),
                                                 const SizedBox(height: 2),
                                                 Text(
-                                                  _formatMoney(
-                                                    item.precioUnitario,
-                                                  ),
+                                                  item.esPeso
+                                                      ? '${_formatMoney(item.precioUnitario)}/kg'
+                                                      : _formatMoney(
+                                                          item.precioUnitario,
+                                                        ),
                                                   style: const TextStyle(
                                                     color:
                                                         AppTheme.textSecondary,
@@ -791,8 +842,34 @@ class _ScannerPosScreenState extends State<ScannerPosScreen> {
                                               ],
                                             ),
                                           ),
-                                          // Control de cantidad
-                                          Container(
+                                          if (item.esPeso)
+                                            GestureDetector(
+                                              onTap: () =>
+                                                  _editarPesoCarrito(i, item),
+                                              child: Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                  horizontal: 10,
+                                                  vertical: 8,
+                                                ),
+                                                decoration: BoxDecoration(
+                                                  color: AppTheme.bgGrey,
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                ),
+                                                child: Text(
+                                                  PesoFormatter.formatKg(
+                                                    item.cantidad,
+                                                  ),
+                                                  style: const TextStyle(
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 14,
+                                                  ),
+                                                ),
+                                              ),
+                                            )
+                                          else
+                                            Container(
                                             decoration: BoxDecoration(
                                               color: AppTheme.bgGrey,
                                               borderRadius:
@@ -859,13 +936,7 @@ class _ScannerPosScreenState extends State<ScannerPosScreen> {
                       ),
 
                       // Botón "Revisar Orden"
-                      Container(
-                        padding: EdgeInsets.fromLTRB(
-                          20,
-                          12,
-                          20,
-                          MediaQuery.of(context).padding.bottom + 12,
-                        ),
+                      SafeBottomBar(
                         decoration: BoxDecoration(
                           color: AppTheme.bgWhite,
                           boxShadow: [

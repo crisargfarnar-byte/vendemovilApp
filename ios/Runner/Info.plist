@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>vendemas</string>
+	<string>Vende Móvil</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -26,6 +26,25 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>Vende Móvil usa la cámara para escanear códigos de barras y QR.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Vende Móvil accede a tus fotos para subir el QR de Yape o Plin y la imagen del producto.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Vende Móvil puede guardar imágenes relacionadas con tu negocio.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Vende Móvil usa Bluetooth para conectar la impresora térmica.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Vende Móvil usa Bluetooth para conectar la impresora térmica.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>La ubicación ayuda a encontrar impresoras Bluetooth cercanas.</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>whatsapp</string>
+		<string>whatsapp-business</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

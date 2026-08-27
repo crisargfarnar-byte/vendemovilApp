@@ -4,6 +4,7 @@ import '../theme/app_theme.dart';
 import '../services/database_service.dart';
 import '../models/producto.dart';
 import 'producto_form_screen.dart';
+import '../utils/safe_area_padding.dart';
 import '../utils/currency_formatter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'scanner_screen.dart';
@@ -237,12 +238,7 @@ class _InventarioScreenState extends State<InventarioScreen> {
                     ),
                   )
                 : ListView.builder(
-                    padding: EdgeInsets.fromLTRB(
-                      16,
-                      0,
-                      16,
-                      MediaQuery.of(context).padding.bottom + 80,
-                    ),
+                    padding: listBottomPadding(context, bottomExtra: 80),
                     itemCount: _filtrados.length,
                     itemBuilder: (_, i) => _buildProductoCard(_filtrados[i]),
                   ),
@@ -369,7 +365,7 @@ class _InventarioScreenState extends State<InventarioScreen> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    _formatMoney(p.precioVenta),
+                    _formatMoney(p.precioVenta) + (p.esPeso ? '/kg' : ''),
                     style: const TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 15,
@@ -391,7 +387,7 @@ class _InventarioScreenState extends State<InventarioScreen> {
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
-                      '${p.stock} uds',
+                      p.formatoStock,
                       style: TextStyle(
                         color: p.agotado
                             ? AppTheme.error

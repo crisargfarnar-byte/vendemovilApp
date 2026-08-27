@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/app_theme.dart';
+import '../services/onboarding_service.dart';
 import 'bienvenida_screen.dart';
 import 'scanner_pos_screen.dart';
 
@@ -41,16 +41,18 @@ class _SplashScreenState extends State<SplashScreen>
 
   Future<void> _navigateToNext() async {
     await Future.delayed(const Duration(milliseconds: 2500));
-    final prefs = await SharedPreferences.getInstance();
-    final isLoggedIn = prefs.getBool('is_logged_in') ?? false;
+    final needsSetup = await OnboardingService.needsSetup();
 
     if (mounted) {
+      final next = needsSetup
+          ? const BienvenidaScreen()
+          : const ScannerPosScreen();
+
       Navigator.pushReplacement(
         context,
         PageRouteBuilder(
           transitionDuration: const Duration(milliseconds: 600),
-          pageBuilder: (_, _, _) =>
-              isLoggedIn ? const ScannerPosScreen() : const BienvenidaScreen(),
+          pageBuilder: (_, _, _) => next,
           transitionsBuilder: (_, animation, _, child) {
             return FadeTransition(opacity: animation, child: child);
           },
@@ -80,12 +82,8 @@ class _SplashScreenState extends State<SplashScreen>
                 Image.asset(
                   'assets/icon/logo.png',
                   height: 160,
+                  width: 160,
                   fit: BoxFit.contain,
-                  errorBuilder: (_, _, _) => const Icon(
-                    Icons.store,
-                    size: 100,
-                    color: AppTheme.primary,
-                  ),
                 ),
                 const SizedBox(height: 24),
                 const Text(

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:audioplayers/audioplayers.dart';
 import 'package:intl/intl.dart';
 import 'dart:io';
 import 'package:excel/excel.dart' hide Border;
@@ -10,7 +9,10 @@ import '../theme/app_theme.dart';
 import '../services/database_service.dart';
 import '../services/printer_service.dart';
 import '../models/venta.dart';
+import '../utils/safe_area_padding.dart';
 import '../utils/currency_formatter.dart';
+import '../utils/sound_player.dart';
+import '../utils/whatsapp_share.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class HistorialScreen extends StatefulWidget {
@@ -206,7 +208,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
                     ),
                   )
                 : ListView.builder(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    padding: listBottomPadding(context),
                     itemCount: _ventas.length,
                     itemBuilder: (_, i) => _buildVentaCard(_ventas[i]),
                   ),
@@ -360,7 +362,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
         final date = DateFormat('dd/MM/yyyy').format(v.fecha);
         final time = DateFormat('HH:mm').format(v.fecha);
         final detalles = v.items
-            .map((i) => '${i.cantidad}x ${i.productoNombre}')
+            .map((i) => '${i.formatoCantidad} ${i.productoNombre}')
             .join(', ');
 
         sheetObject.appendRow([
@@ -518,7 +520,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.6,
+        initialChildSize: 0.72,
         maxChildSize: 0.9,
         minChildSize: 0.3,
         expand: false,
@@ -570,7 +572,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
                       ),
                     ),
                     Text(
-                      'x${item.cantidad}',
+                      item.formatoCantidad,
                       style: const TextStyle(color: AppTheme.textSecondary),
                     ),
                     const SizedBox(width: 16),
@@ -606,14 +608,46 @@ class _HistorialScreenState extends State<HistorialScreen> {
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: () async {
-                  await PrinterService.instance.imprimirTicket(v);
-                  HapticFeedback.heavyImpact();
                   try {
-                    AudioPlayer().play(AssetSource('sounds/caja.mp3'));
-                  } catch (_) {}
+                    await PrinterService.instance.imprimirTicket(v);
+                    HapticFeedback.heavyImpact();
+                    SoundPlayer.caja();
+                  } catch (e) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('No se pudo imprimir: $e'),
+                        backgroundColor: AppTheme.warning,
+                      ),
+                    );
+                  }
                 },
                 icon: const Icon(Icons.print_rounded),
                 label: const Text('Reimprimir Ticket'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _enviarWhatsApp(v),
+                icon: const Icon(
+                  Icons.chat_rounded,
+                  color: Color(0xFF25D366),
+                ),
+                label: const Text('Enviar por WhatsApp'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _enviarWhatsAppCliente(ctx, v),
+                icon: const Icon(
+                  Icons.person_add_alt_1_rounded,
+                  color: Color(0xFF25D366),
+                ),
+                label: const Text('WhatsApp del cliente'),
               ),
             ),
             const SizedBox(height: 12),
@@ -635,5 +669,74 @@ class _HistorialScreenState extends State<HistorialScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _enviarWhatsApp(Venta v) async {
+    final texto = await PrinterService.instance.textoTicket(v);
+    final ok = await WhatsAppShare.enviar(texto: texto);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo abrir WhatsApp'),
+          backgroundColor: AppTheme.error,
+        ),
+      );
+    }
+  }
+
+  Future<void> _enviarWhatsAppCliente(BuildContext sheetContext, Venta v) async {
+    final ctrl = TextEditingController();
+    final numero = await showDialog<String>(
+      context: sheetContext,
+      builder: (ctx) => AlertDialog(
+        title: const Text('WhatsApp del cliente'),
+        content: TextField(
+          controller: ctrl,
+          keyboardType: TextInputType.phone,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Número',
+            hintText: '987654321',
+            prefixIcon: Icon(Icons.phone),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('Enviar'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (numero == null || numero.isEmpty) return;
+
+    final normalizado = WhatsAppShare.normalizarNumero(numero);
+    if (normalizado == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Número inválido. Ej: 987654321'),
+            backgroundColor: AppTheme.error,
+          ),
+        );
+      }
+      return;
+    }
+
+    final texto = await PrinterService.instance.textoTicket(v);
+    final ok = await WhatsAppShare.enviar(texto: texto, numero: normalizado);
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo abrir WhatsApp'),
+          backgroundColor: AppTheme.error,
+        ),
+      );
+    }
   }
 }

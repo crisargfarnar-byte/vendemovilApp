@@ -1,3 +1,6 @@
+import '../utils/peso_formatter.dart';
+import 'producto.dart';
+
 /// Modelo de Venta
 class Venta {
   final String id;
@@ -24,7 +27,8 @@ class Venta {
     this.nota,
   }) : fecha = fecha ?? DateTime.now();
 
-  int get totalItems => items.fold(0, (sum, item) => sum + item.cantidad);
+  /// Unidades sumadas + 1 por cada línea de peso (no suma gramos).
+  int get totalItems => items.fold(0, (sum, item) => sum + (item.esPeso ? 1 : item.cantidad));
 
   double get gananciaTotal =>
       items.fold(0.0, (sum, item) => sum + item.gananciaTotal) - descuento;
@@ -68,8 +72,10 @@ class ItemVenta {
   final String codigoBarras;
   final double precioUnitario;
   final double precioCompra;
+  /// Unidades, o gramos si [esPeso].
   final int cantidad;
   final double subtotal;
+  final String tipoVenta;
   final String? imagenUrl;
 
   ItemVenta({
@@ -82,11 +88,20 @@ class ItemVenta {
     required this.precioCompra,
     required this.cantidad,
     required this.subtotal,
+    this.tipoVenta = TipoVenta.unidad,
     this.imagenUrl,
   });
 
+  bool get esPeso => tipoVenta == TipoVenta.peso;
+
+  String get formatoCantidad =>
+      esPeso ? PesoFormatter.formatKg(cantidad) : 'x$cantidad';
+
   double get gananciaUnitaria => precioUnitario - precioCompra;
-  double get gananciaTotal => gananciaUnitaria * cantidad;
+
+  double get gananciaTotal => esPeso
+      ? PesoFormatter.subtotal(gramos: cantidad, precioPorKg: gananciaUnitaria)
+      : gananciaUnitaria * cantidad;
 
   Map<String, dynamic> toMap() {
     return {
@@ -99,6 +114,7 @@ class ItemVenta {
       'precio_compra': precioCompra,
       'cantidad': cantidad,
       'subtotal': subtotal,
+      'tipo_venta': tipoVenta,
     };
   }
 
@@ -111,14 +127,17 @@ class ItemVenta {
       codigoBarras: map['codigo_barras'] as String? ?? '',
       precioUnitario: (map['precio_unitario'] as num).toDouble(),
       precioCompra: (map['precio_compra'] as num).toDouble(),
-      cantidad: map['cantidad'] as int,
+      cantidad: (map['cantidad'] as num).toInt(),
       subtotal: (map['subtotal'] as num).toDouble(),
+      tipoVenta: map['tipo_venta'] as String? ?? TipoVenta.unidad,
+      imagenUrl: map['imagen_url'] as String?,
     );
   }
 
   ItemVenta copyWith({
     int? cantidad,
     double? subtotal,
+    String? tipoVenta,
   }) {
     return ItemVenta(
       id: id,
@@ -130,6 +149,7 @@ class ItemVenta {
       precioCompra: precioCompra,
       cantidad: cantidad ?? this.cantidad,
       subtotal: subtotal ?? this.subtotal,
+      tipoVenta: tipoVenta ?? this.tipoVenta,
       imagenUrl: imagenUrl,
     );
   }
