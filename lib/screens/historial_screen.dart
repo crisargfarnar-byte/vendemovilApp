@@ -1,8 +1,12 @@
+// ==================================================
+// FACTUCELL — Historial de Ventas
+// Versión: 1.0 | Guayaquil, Ecuador 🇪🇨
+// Rubro: Artículos y Juegos Pirotécnicos 🎆
+// ==================================================
+
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import 'dart:io';
-import 'package:excel/excel.dart' hide Border;
+import 'package:excel/excel.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../theme/app_theme.dart';
@@ -11,659 +15,184 @@ import '../services/printer_service.dart';
 import '../models/venta.dart';
 import '../utils/safe_area_padding.dart';
 import '../utils/currency_formatter.dart';
-import '../utils/sound_player.dart';
 import '../utils/whatsapp_share.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import '../widgets/safe_bottom_bar.dart';
 
 class HistorialScreen extends StatefulWidget {
   const HistorialScreen({super.key});
+
   @override
   State<HistorialScreen> createState() => _HistorialScreenState();
 }
 
 class _HistorialScreenState extends State<HistorialScreen> {
-  final _db = DatabaseService.instance;
-  final _df = DateFormat('dd/MM/yyyy HH:mm', 'es');
   List<Venta> _ventas = [];
-  bool _loading = true;
+  List<Venta> _filtradas = [];
+  bool _cargando = true;
   String _filtro = 'hoy';
-  String _monedaSimbolo = 'S/';
+  DateTime? _fechaInicio;
+  DateTime? _fechaFin;
+  final TextEditingController _buscarCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _cargarAjustes();
-    _cargar();
+    _cargarVentas();
   }
 
-  Future<void> _cargarAjustes() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (mounted) {
+  Future<void> _cargarVentas() async {
+    setState(() => _cargando = true);
+    try {
+      final lista = await DatabaseService.obtenerTodasLasVentas();
       setState(() {
-        _monedaSimbolo = prefs.getString('moneda_simbolo') ?? 'S/';
+        _ventas = lista;
+        _aplicarFiltro();
+        _cargando = false;
       });
+    } catch (e) {
+      setState(() => _cargando = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red)
+        );
+      }
     }
   }
 
-  String _formatMoney(double amount) {
-    return CurrencyFormatter.format(amount, _monedaSimbolo);
-  }
-
-  Future<void> _cargar() async {
-    setState(() => _loading = true);
+  void _aplicarFiltro() {
     final ahora = DateTime.now();
-    DateTime? desde;
+    DateTime inicio, fin;
+
     switch (_filtro) {
       case 'hoy':
-        desde = DateTime(ahora.year, ahora.month, ahora.day);
+        inicio = DateTime(ahora.year, ahora.month, ahora.day);
+        fin = inicio.add(const Duration(days: 1));
         break;
       case 'semana':
-        desde = ahora.subtract(const Duration(days: 7));
+        inicio = ahora.subtract(Duration(days: ahora.weekday - 1));
+        inicio = DateTime(inicio.year, inicio.month, inicio.day);
+        fin = inicio.add(const Duration(days: 7));
         break;
       case 'mes':
-        desde = DateTime(ahora.year, ahora.month, 1);
+        inicio = DateTime(ahora.year, ahora.month, 1);
+        fin = DateTime(ahora.year, ahora.month + 1, 1);
+        break;
+      case 'personalizado':
+        if (_fechaInicio != null && _fechaFin != null) {
+          inicio = _fechaInicio!;
+          fin = _fechaFin!.add(const Duration(days: 1));
+        } else {
+          _filtradas = _ventas;
+          return;
+        }
         break;
       default:
-        desde = null;
+        _filtradas = _ventas;
+        return;
     }
-    final ventas = await _db.obtenerVentas(desde: desde);
-    if (mounted)
-      setState(() {
-        _ventas = ventas;
-        _loading = false;
-      });
+
+    String busqueda = _buscarCtrl.text.trim().toLowerCase();
+    _filtradas = _ventas.where((v) {
+      final fechaVenta = DateTime.parse(v.fecha);
+      bool enRango = fechaVenta.isAfter(inicio.subtract(const Duration(seconds: 1))) &&
+                     fechaVenta.isBefore(fin);
+      if (!enRango) return false;
+      if (busqueda.isEmpty) return true;
+      return v.items.any((item) =>
+        item['nombre'].toString().toLowerCase().contains(busqueda)
+      ) || busqueda.contains(v.total.toString());
+    }).toList();
   }
 
-  double get _totalVentas => _ventas.fold(0.0, (s, v) => s + v.total);
-  double get _totalGanancia => _ventas.fold(0.0, (s, v) => s + v.gananciaTotal);
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Historial de Ventas'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.delete_sweep_rounded, color: AppTheme.error),
-            onPressed: _eliminarTodasLasVentas,
-            tooltip: 'Eliminar todas',
-          ),
-          IconButton(
-            icon: const Icon(Icons.download_rounded, color: AppTheme.primary),
-            onPressed: _exportarExcel,
-            tooltip: 'Exportar a Excel',
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      body: Column(
-        children: [
-          // Filtros
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-            child: Row(
-              children: [
-                _buildFiltro('Hoy', 'hoy'),
-                const SizedBox(width: 8),
-                _buildFiltro('Semana', 'semana'),
-                const SizedBox(width: 8),
-                _buildFiltro('Mes', 'mes'),
-                const SizedBox(width: 8),
-                _buildFiltro('Todo', 'todo'),
-              ],
-            ),
-          ),
-          // Resumen
-          Container(
-            margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: AppTheme.primary,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    children: [
-                      Text(
-                        '${_ventas.length}',
-                        style: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const Text(
-                        'Ventas',
-                        style: TextStyle(color: Colors.white70, fontSize: 12),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(width: 1, height: 40, color: Colors.white24),
-                Expanded(
-                  child: Column(
-                    children: [
-                      Text(
-                        _formatMoney(_totalVentas),
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const Text(
-                        'Ingresos',
-                        style: TextStyle(color: Colors.white70, fontSize: 12),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(width: 1, height: 40, color: Colors.white24),
-                Expanded(
-                  child: Column(
-                    children: [
-                      Text(
-                        _formatMoney(_totalGanancia),
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const Text(
-                        'Ganancia',
-                        style: TextStyle(color: Colors.white70, fontSize: 12),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-          // Lista
-          Expanded(
-            child: _loading
-                ? const Center(
-                    child: CircularProgressIndicator(color: AppTheme.primary),
-                  )
-                : _ventas.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.receipt_long_outlined,
-                          size: 56,
-                          color: AppTheme.textHint,
-                        ),
-                        const SizedBox(height: 12),
-                        const Text(
-                          'Sin ventas en este período',
-                          style: TextStyle(color: AppTheme.textSecondary),
-                        ),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
-                    padding: listBottomPadding(context),
-                    itemCount: _ventas.length,
-                    itemBuilder: (_, i) => _buildVentaCard(_ventas[i]),
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFiltro(String label, String value) {
-    final sel = _filtro == value;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () {
-          _filtro = value;
-          _cargar();
-        },
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          decoration: BoxDecoration(
-            color: sel ? AppTheme.primary : AppTheme.bgWhite,
-            borderRadius: BorderRadius.circular(10),
-            border: sel ? null : Border.all(color: AppTheme.border),
-          ),
-          child: Center(
-            child: Text(
-              label,
-              style: TextStyle(
-                color: sel ? Colors.white : AppTheme.textSecondary,
-                fontSize: 13,
-                fontWeight: sel ? FontWeight.bold : FontWeight.normal,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _eliminarTodasLasVentas() async {
-    if (_ventas.isEmpty) return;
-
-    final confirmar = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Eliminar Historial'),
-        content: const Text(
-          '¿Estás seguro de que deseas eliminar TODAS las ventas registradas? Esta acción no se puede deshacer.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
-            child: const Text('Eliminar Todo'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmar == true) {
-      await _db.eliminarTodasLasVentas();
-      _cargar();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Historial eliminado correctamente'),
-            backgroundColor: AppTheme.success,
-          ),
-        );
-      }
-    }
-  }
-
-  Future<void> _eliminarVentaUnica(Venta v) async {
-    final confirmar = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Eliminar Venta'),
-        content: Text(
-          '¿Eliminar la venta #${v.id.substring(0, 8).toUpperCase()}? Esta acción no se puede deshacer.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
-            child: const Text('Eliminar'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmar == true) {
-      await _db.eliminarVenta(v.id);
-      if (mounted) {
-        Navigator.pop(context); // Close the bottom sheet
-        _cargar(); // Reload list
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Venta eliminada'),
-            backgroundColor: AppTheme.success,
-          ),
-        );
-      }
-    }
-  }
+  double get _totalPeriodo => _filtradas.fold(0, (sum, v) => sum + v.total);
 
   Future<void> _exportarExcel() async {
-    if (_ventas.isEmpty) {
+    if (_filtradas.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No hay ventas para exportar'),
-          backgroundColor: AppTheme.warning,
-        ),
+        const SnackBar(content: Text('No hay datos para exportar'))
       );
       return;
     }
 
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Generando archivo Excel...')));
-
-    try {
-      var excel = Excel.createExcel();
-      Sheet sheetObject = excel['Historial de Ventas'];
-      excel.setDefaultSheet('Historial de Ventas');
-
-      // Títulos de columnas
-      sheetObject.appendRow([
-        TextCellValue('ID Venta'),
-        TextCellValue('Fecha'),
-        TextCellValue('Hora'),
-        TextCellValue('Método Pago'),
-        TextCellValue('Artículos Totales'),
-        TextCellValue('Subtotal'),
-        TextCellValue('Descuento'),
-        TextCellValue('Total ($_monedaSimbolo)'),
-        TextCellValue('Ganancia Neta'),
-        TextCellValue('Detalle Productos'),
+    final excel = Excel.createExcel();
+    final hoja = excel['Ventas'];
+    
+    hoja.appendRow(['Fecha', 'Productos', 'Total', 'Método de Pago']);
+    for (var v in _filtradas) {
+      hoja.appendRow([
+        DateFormat('dd/MM/yyyy HH:mm').format(DateTime.parse(v.fecha)),
+        v.items.map((i) => '${i['cantidad']}x ${i['nombre']}').join(' | '),
+        v.total,
+        v.metodoPago,
       ]);
-
-      // Filas de datos
-      for (var v in _ventas) {
-        final date = DateFormat('dd/MM/yyyy').format(v.fecha);
-        final time = DateFormat('HH:mm').format(v.fecha);
-        final detalles = v.items
-            .map((i) => '${i.formatoCantidad} ${i.productoNombre}')
-            .join(', ');
-
-        sheetObject.appendRow([
-          TextCellValue(v.id.substring(0, 8).toUpperCase()),
-          TextCellValue(date),
-          TextCellValue(time),
-          TextCellValue(v.metodoPago.toUpperCase()),
-          IntCellValue(v.totalItems),
-          DoubleCellValue(v.subtotal),
-          DoubleCellValue(v.descuento),
-          DoubleCellValue(v.total),
-          DoubleCellValue(v.gananciaTotal),
-          TextCellValue(detalles),
-        ]);
-      }
-
-      var fileBytes = excel.save();
-      final dir = await getApplicationDocumentsDirectory();
-      final dateStr = DateFormat('yyyyMMdd_HHmm').format(DateTime.now());
-      final path = '${dir.path}/VendeMovil_Ventas_$dateStr.xlsx';
-      File(path)
-        ..createSync(recursive: true)
-        ..writeAsBytesSync(fileBytes!);
-
-      await Share.shareXFiles([
-        XFile(path),
-      ], text: 'Reporte de Ventas Vende Móvil');
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al exportar: $e'),
-            backgroundColor: AppTheme.error,
-          ),
-        );
-      }
     }
+
+    final directorio = await getTemporaryDirectory();
+    final ruta = '${directorio.path}/ventas_${DateFormat('yyyyMMdd').format(DateTime.now())}.xlsx';
+    await excel.save(fileName: ruta);
+    await Share.shareXFiles([XFile(ruta)], text: 'Reporte de Ventas — FACTUCELL 🎆');
   }
 
-  Widget _buildVentaCard(Venta v) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-        color: AppTheme.bgWhite,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () => _mostrarDetalle(v),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: AppTheme.primary.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(
-                  Icons.receipt_rounded,
-                  color: AppTheme.primary,
-                  size: 22,
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '#${v.id.substring(0, 8).toUpperCase()}',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      '${v.totalItems} prod. • ${_df.format(v.fecha)}',
-                      style: const TextStyle(
-                        color: AppTheme.textSecondary,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    _formatMoney(v.total),
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 16,
-                      color: AppTheme.primary,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  _buildMetodoBadge(v.metodoPago),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildMetodoBadge(String metodo) {
-    Color color;
-    String label;
-    switch (metodo) {
-      case 'yape':
-        color = const Color(0xFF6C2DC7);
-        label = 'Yape';
-        break;
-      case 'plin':
-        color = const Color(0xFF00BFA5);
-        label = 'Plin';
-        break;
-      case 'tarjeta':
-        color = AppTheme.info;
-        label = 'Tarjeta';
-        break;
-      default:
-        color = AppTheme.success;
-        label = 'Efectivo';
-    }
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: color,
-          fontSize: 10,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-    );
-  }
-
-  void _mostrarDetalle(Venta v) {
+  void _verDetalle(Venta venta) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: AppTheme.bgWhite,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16))
       ),
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.72,
-        maxChildSize: 0.9,
-        minChildSize: 0.3,
-        expand: false,
-        builder: (_, scrollCtrl) => ListView(
-          controller: scrollCtrl,
-          padding: const EdgeInsets.all(20),
+      builder: (_) => Container(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppTheme.border,
-                  borderRadius: BorderRadius.circular(2),
-                ),
+            Text('Detalle de Venta', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            Text(DateFormat('EEEE, dd/MM/yyyy — HH:mm').format(DateTime.parse(venta.fecha))),
+            const Divider(height: 24),
+            ...venta.items.map((item) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('${item['cantidad']}x ${item['nombre']}'),
+                  Text(CurrencyFormatear.monto(item['subtotal']),
+                       style: const TextStyle(fontWeight: FontWeight.w500)),
+                ],
               ),
-            ),
-            const SizedBox(height: 16),
-            Center(
-              child: const Text(
-                'Detalle de Venta',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-            ),
-            Center(
-              child: Text(
-                '#${v.id.substring(0, 8).toUpperCase()}',
-                style: const TextStyle(color: AppTheme.textSecondary),
-              ),
-            ),
-            Center(
-              child: Text(
-                _df.format(v.fecha),
-                style: const TextStyle(color: AppTheme.textMuted, fontSize: 12),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Divider(),
-            ...v.items.map(
-              (item) => Padding(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        item.productoNombre,
-                        style: const TextStyle(fontSize: 14),
-                      ),
-                    ),
-                    Text(
-                      item.formatoCantidad,
-                      style: const TextStyle(color: AppTheme.textSecondary),
-                    ),
-                    const SizedBox(width: 16),
-                    Text(
-                      _formatMoney(item.subtotal),
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const Divider(),
-            const SizedBox(height: 8),
+            )),
+            const Divider(height: 24),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  'TOTAL',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                const Text('TOTAL', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                Text(CurrencyFormatear.monto(venta.total),
+                     style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: TemaFactucell.rojoFuego)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Text('Pago: ${venta.metodoPago}'),
+            if (venta.metodoPago == 'Efectivo' && venta.cambio != null)
+              Text('Recibido: \$${venta.recibido} | Cambio: \$${venta.cambio}'),
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                    label: const Text('Cerrar'),
+                  ),
                 ),
-                Text(
-                  _formatMoney(v.total),
-                  style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.primary,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(backgroundColor: TemaFactucell.naranjaChispa),
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.print, color: Colors.white),
+                    label: const Text('Imprimir', style: TextStyle(color: Colors.white)),
                   ),
                 ),
               ],
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () async {
-                  try {
-                    await PrinterService.instance.imprimirTicket(v);
-                    HapticFeedback.heavyImpact();
-                    SoundPlayer.caja();
-                  } catch (e) {
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text('No se pudo imprimir: $e'),
-                        backgroundColor: AppTheme.warning,
-                      ),
-                    );
-                  }
-                },
-                icon: const Icon(Icons.print_rounded),
-                label: const Text('Reimprimir Ticket'),
-              ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () => _enviarWhatsApp(v),
-                icon: const Icon(
-                  Icons.chat_rounded,
-                  color: Color(0xFF25D366),
-                ),
-                label: const Text('Enviar por WhatsApp'),
-              ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () => _enviarWhatsAppCliente(ctx, v),
-                icon: const Icon(
-                  Icons.person_add_alt_1_rounded,
-                  color: Color(0xFF25D366),
-                ),
-                label: const Text('WhatsApp del cliente'),
-              ),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () => _eliminarVentaUnica(v),
-                icon: const Icon(Icons.delete_outline, color: AppTheme.error),
-                label: const Text(
-                  'Eliminar Venta',
-                  style: TextStyle(color: AppTheme.error),
-                ),
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: AppTheme.error),
-                ),
-              ),
             ),
           ],
         ),
@@ -671,72 +200,171 @@ class _HistorialScreenState extends State<HistorialScreen> {
     );
   }
 
-  Future<void> _enviarWhatsApp(Venta v) async {
-    final texto = await PrinterService.instance.textoTicket(v);
-    final ok = await WhatsAppShare.enviar(texto: texto);
-    if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No se pudo abrir WhatsApp'),
-          backgroundColor: AppTheme.error,
-        ),
-      );
-    }
-  }
-
-  Future<void> _enviarWhatsAppCliente(BuildContext sheetContext, Venta v) async {
-    final ctrl = TextEditingController();
-    final numero = await showDialog<String>(
-      context: sheetContext,
-      builder: (ctx) => AlertDialog(
-        title: const Text('WhatsApp del cliente'),
-        content: TextField(
-          controller: ctrl,
-          keyboardType: TextInputType.phone,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Número',
-            hintText: '987654321',
-            prefixIcon: Icon(Icons.phone),
-          ),
-        ),
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Historial de Ventas 📋'),
+        backgroundColor: TemaFactucell.rojoFuego,
+        foregroundColor: Colors.white,
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-            child: const Text('Enviar'),
+          IconButton(
+            icon: const Icon(Icons.file_download),
+            onPressed: _exportarExcel,
+            tooltip: 'Exportar Excel',
           ),
         ],
       ),
-    );
-    ctrl.dispose();
-    if (numero == null || numero.isEmpty) return;
+      body: SafeAreaPadding(
+        child: Column(
+          children: [
+            // 🔍 FILTROS Y BÚSQUEDA
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                children: [
+                  TextField(
+                    controller: _buscarCtrl,
+                    decoration: const InputDecoration(
+                      hintText: 'Buscar por producto o monto...',
+                      prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                    ),
+                    onChanged: (_) => setState(() => _aplicarFiltro()),
+                  ),
+                  const SizedBox(height: 12),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: [
+                        _botonFiltro('Hoy', 'hoy'),
+                        const SizedBox(width: 8),
+                        _botonFiltro('Semana', 'semana'),
+                        const SizedBox(width: 8),
+                        _botonFiltro('Mes', 'mes'),
+                        const SizedBox(width: 8),
+                        _botonFiltro('Personalizado', 'personalizado'),
+                      ],
+                    ),
+                  ),
+                  if (_filtro == 'personalizado') ...[
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton.icon(
+                            icon: const Icon(Icons.calendar_today),
+                            label: Text(_fechaInicio != null
+                                ? DateFormat('dd/MM/yyyy').format(_fechaInicio!)
+                                : 'Desde'),
+                            onPressed: () async {
+                              final fecha = await showDatePicker(
+                                context: context,
+                                initialDate: DateTime.now(),
+                                firstDate: DateTime(2024),
+                                lastDate: DateTime.now(),
+                              );
+                              if (fecha != null) setState(() {
+                                _fechaInicio = fecha;
+                                _aplicarFiltro();
+                              });
+                            },
+                          ),
+                        ),
+                        const Text(' — '),
+                        Expanded(
+                          child: TextButton.icon(
+                            icon: const Icon(Icons.calendar_today),
+                            label: Text(_fechaFin != null
+                                ? DateFormat('dd/MM/yyyy').format(_fechaFin!)
+                                : 'Hasta'),
+                            onPressed: () async {
+                              final fecha = await showDatePicker(
+                                context: context,
+                                initialDate: DateTime.now(),
+                                firstDate: DateTime(2024),
+                                lastDate: DateTime.now(),
+                              );
+                              if (fecha != null) setState(() {
+                                _fechaFin = fecha;
+                                _aplicarFiltro();
+                              });
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
 
-    final normalizado = WhatsAppShare.normalizarNumero(numero);
-    if (normalizado == null) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Número inválido. Ej: 987654321'),
-            backgroundColor: AppTheme.error,
-          ),
-        );
-      }
-      return;
-    }
+            // 💰 TOTAL DEL PERÍODO
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 12),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: TemaFactucell.naranjaChispa.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Total del período:', style: TextStyle(fontSize: 16)),
+                  Text(CurrencyFormatear.monto(_totalPeriodo),
+                       style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: TemaFactucell.rojoFuego)),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
 
-    final texto = await PrinterService.instance.textoTicket(v);
-    final ok = await WhatsAppShare.enviar(texto: texto, numero: normalizado);
-    if (!ok && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No se pudo abrir WhatsApp'),
-          backgroundColor: AppTheme.error,
+            // 📋 LISTA DE VENTAS
+            Expanded(
+              child: _cargando
+                  ? const Center(child: CircularProgressIndicator(color: TemaFactucell.naranjaChispa))
+                  : _filtradas.isEmpty
+                      ? const Center(child: Text('No hay ventas en este período', style: TextStyle(color: Colors.grey)))
+                      : ListView.separated(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          itemCount: _filtradas.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (_, i) {
+                            final venta = _filtradas[i];
+                            final fecha = DateTime.parse(venta.fecha);
+                            return ListTile(
+                              onTap: () => _verDetalle(venta),
+                              leading: CircleAvatar(
+                                backgroundColor: TemaFactucell.naranjaChispa.withOpacity(0.2),
+                                child: Text('${venta.items.length}',
+                                    style: const TextStyle(fontWeight: FontWeight.bold, color: TemaFactucell.naranjaChispa)),
+                              ),
+                              title: Text(DateFormat('dd/MM/yyyy HH:mm').format(fecha)),
+                              subtitle: Text('${venta.items.length} producto(s) • ${venta.metodoPago}'),
+                              trailing: Text(CurrencyFormatear.monto(venta.total),
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                            );
+                          },
+                        ),
+            ),
+          ],
         ),
-      );
-    }
+      ),
+      bottomNavigationBar: const SafeBottomBar(indiceActivo: 1),
+    );
+  }
+
+  Widget _botonFiltro(String etiqueta, String valor) {
+    final seleccionado = _filtro == valor;
+    return ElevatedButton(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: seleccionado ? TemaFactucell.naranjaChispa : Colors.grey[200],
+        foregroundColor: seleccionado ? Colors.white : Colors.black87,
+      ),
+      onPressed: () => setState(() {
+        _filtro = valor;
+        _aplicarFiltro();
+      }),
+      child: Text(etiqueta),
+    );
   }
 }
