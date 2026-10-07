@@ -1,38 +1,35 @@
+// ==================================================
+// FACTUCELL — Sistema de Ventas y Facturación
+// Versión: 1.0 | Guayaquil, Ecuador 🇪🇨
+// Rubro: Artículos y Juegos Pirotécnicos 🎆
+// ==================================================
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:provider/provider.dart';
-import 'package:intl/date_symbol_data_local.dart';
-import 'theme/app_theme.dart';
-import 'providers/carrito_provider.dart';
-import 'screens/splash_screen.dart';
+import 'theme/tema.dart';
+import 'screens/inicio.dart';
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  await initializeDateFormatting('es_PE', null);
-  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
-    statusBarColor: Colors.transparent,
-    statusBarIconBrightness: Brightness.dark,
-    systemNavigationBarColor: AppTheme.bgWhite,
-  ));
-
-  runApp(const VendeMasApp());
+  SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+  runApp(const FactucellApp());
 }
 
-class VendeMasApp extends StatelessWidget {
-  const VendeMasApp({super.key});
+class FactucellApp extends StatelessWidget {
+  const FactucellApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => CarritoProvider()),
-      ],
-      child: MaterialApp(
-        title: 'Vende Móvil',
-        debugShowCheckedModeBanner: false,
-        theme: AppTheme.lightTheme,
-        home: const SplashScreen(),
-      ),
+    return MaterialApp(
+      title: 'Factucell',
+      debugShowCheckedModeBanner: false,
+      theme: TemaFactucell.claro,
+      darkTheme: TemaFactucell.oscuro,
+      themeMode: ThemeMode.system,
+      home: const PantallaInicio(),
     );
   }
 }
