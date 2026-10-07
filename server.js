@@ -39,8 +39,11 @@ const COLORES = {
 };
 
 const db = new sqlite3.Database('./factucell.db', (err) => {
-  if (err) console.error('❌ Error BD:', err.message);
-  else console.log('✅ Conectado a Factucell');
+  if (err) {
+    console.error('❌ Error al conectar base de datos:', err.message);
+  } else {
+    console.log('✅ Conectado a Factucell — Base de Datos');
+  }
 });
 
 app.use(cors());
@@ -50,7 +53,7 @@ app.use(express.urlencoded({ extended: true }));
 app.listen(port, () => {
   console.log(`\n🔥 ${CONFIG.appNombre} — Servidor activo`);
   console.log(`📍 Versión: ${CONFIG.version}`);
-  console.log(`🌍 ${CONFIG.pais} | ${CONFIG.simboloMoneda} Dólares`);
+  console.log(`🌍 País: ${CONFIG.pais} | Moneda: ${CONFIG.simboloMoneda}`);
   console.log(`🎆 Rubro: Juegos Pirotécnicos`);
   console.log(`🔗 Puerto: ${port}\n`);
 });
