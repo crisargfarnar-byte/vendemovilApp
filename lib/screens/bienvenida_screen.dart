@@ -1,148 +1,90 @@
+// ==================================================
+// FACTUCELL — Pantalla de Bienvenida
+// Versión: 1.0 | Guayaquil, Ecuador 🇪🇨
+// Rubro: Artículos y Juegos Pirotécnicos 🎆
+// ==================================================
+
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
-import '../widgets/terminos_condiciones_dialog.dart';
 import 'configuracion_inicial_screen.dart';
 
-class BienvenidaScreen extends StatelessWidget {
-  const BienvenidaScreen({super.key});
+class PantallaBienvenida extends StatelessWidget {
+  const PantallaBienvenida({super.key});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.bgWhite,
       body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                child: Center(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(32),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.2),
-                          blurRadius: 20,
-                          offset: const Offset(0, 10),
-                        ),
-                      ],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(32),
-                      child: Stack(
-                        alignment: Alignment.bottomCenter,
-                        children: [
-                          Image.asset(
-                            'assets/imgvendemovil.png',
-                            fit: BoxFit.contain,
-                          ),
-                          Positioned.fill(
-                            child: Container(
-                              decoration: BoxDecoration(
-                                gradient: LinearGradient(
-                                  begin: Alignment.topCenter,
-                                  end: Alignment.bottomCenter,
-                                  colors: [
-                                    Colors.transparent,
-                                    Colors.black.withValues(alpha: 0.9),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.all(24),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                const Text(
-                                  'Vende Móvil',
-                                  style: TextStyle(
-                                    fontSize: 36,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.white,
-                                    letterSpacing: -1,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                                const SizedBox(height: 12),
-                                Text(
-                                  'Punto de venta móvil: vende por unidad o '
-                                  'kilogramos, controla inventario e imprime '
-                                  'tickets desde tu celular.',
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    color: Colors.white.withValues(alpha: 0.95),
-                                    height: 1.4,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                                const SizedBox(height: 12),
-                                Text(
-                                  'Versión 2.0',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.white.withValues(alpha: 0.75),
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                // 🔥 LOGO / ÍCONO
+                Container(
+                  width: 140,
+                  height: 140,
+                  decoration: BoxDecoration(
+                    color: TemaFactucell.rojoFuego.withOpacity(0.1),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.local_fireworks_rounded,
+                    size: 80,
+                    color: TemaFactucell.rojoFuego,
                   ),
                 ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  ElevatedButton(
+                const SizedBox(height: 32),
+
+                // ✨ NOMBRE DE LA APP
+                Text(
+                  'FACTUCELL',
+                  style: TextStyle(
+                    fontSize: 36,
+                    fontWeight: FontWeight.bold,
+                    color: TemaFactucell.rojoFuego,
+                    letterSpacing: 3,
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // 📍 UBICACIÓN Y GIRO
+                const Text(
+                  'Sistema de Ventas y Facturación\nArtículos y Juegos Pirotécnicos\nGuayaquil — Ecuador 🇪🇨',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 16,
+                    height: 1.5,
+                    color: TemaFactucell.grisSuave,
+                  ),
+                ),
+                const SizedBox(height: 48),
+
+                // ▶️ BOTÓN DE INICIO
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
                     onPressed: () {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => const ConfiguracionInicialScreen(),
+                          builder: (context) => const PantallaConfiguracionInicial(),
                         ),
                       );
                     },
                     style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 18),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      elevation: 0,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
                     ),
                     child: const Text(
-                      'Empezar',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      'Comenzar →',
+                      style: TextStyle(fontSize: 18),
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: () => showTerminosCondicionesDialog(context),
-                    child: const Text(
-                      'Términos y condiciones',
-                      style: TextStyle(
-                        fontSize: 14,
-                        decoration: TextDecoration.underline,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
