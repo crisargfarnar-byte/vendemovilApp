@@ -1,8 +1,12 @@
+// ==================================================
+// FACTUCELL — Pantalla de Carga / Splash
+// Versión: 1.0 | Guayaquil, Ecuador 🇪🇨
+// Estilo: Encendido Pirotécnico 🎇
+// ==================================================
+
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
-import '../services/onboarding_service.dart';
 import 'bienvenida_screen.dart';
-import 'scanner_pos_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -13,92 +17,130 @@ class SplashScreen extends StatefulWidget {
 
 class _SplashScreenState extends State<SplashScreen>
     with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _fadeAnimation;
-  late Animation<double> _scaleAnimation;
+  late AnimationController _controlador;
+  late Animation<double> _animacionFade;
+  late Animation<double> _animacionEscala;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
+
+    // 🎬 Control de animación — estilo chispa encendiéndose
+    _controlador = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1500),
+      duration: const Duration(milliseconds: 1800),
     );
 
-    _fadeAnimation = Tween<double>(
-      begin: 0.0,
-      end: 1.0,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeIn));
+    _animacionFade = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(parent: _controlador, curve: Curves.easeIn),
+    );
 
-    _scaleAnimation = Tween<double>(
-      begin: 0.8,
-      end: 1.0,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutBack));
+    _animacionEscala = Tween<double>(begin: 0.6, end: 1).animate(
+      CurvedAnimation(parent: _controlador, curve: Curves.elasticOut),
+    );
 
-    _controller.forward();
-    _navigateToNext();
-  }
+    _controlador.forward();
 
-  Future<void> _navigateToNext() async {
-    await Future.delayed(const Duration(milliseconds: 2500));
-    final needsSetup = await OnboardingService.needsSetup();
-
-    if (mounted) {
-      final next = needsSetup
-          ? const BienvenidaScreen()
-          : const ScannerPosScreen();
-
-      Navigator.pushReplacement(
-        context,
-        PageRouteBuilder(
-          transitionDuration: const Duration(milliseconds: 600),
-          pageBuilder: (_, _, _) => next,
-          transitionsBuilder: (_, animation, _, child) {
-            return FadeTransition(opacity: animation, child: child);
-          },
-        ),
-      );
-    }
+    // ⏳ Avanzar a Bienvenida tras carga
+    Future.delayed(const Duration(milliseconds: 2500), () {
+      if (mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const PantallaBienvenida()),
+        );
+      }
+    });
   }
 
   @override
   void dispose() {
-    _controller.dispose();
+    _controlador.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.bgWhite,
-      body: Center(
-        child: FadeTransition(
-          opacity: _fadeAnimation,
-          child: ScaleTransition(
-            scale: _scaleAnimation,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Image.asset(
-                  'assets/icon/logo.png',
-                  height: 160,
-                  width: 160,
-                  fit: BoxFit.contain,
+      backgroundColor: TemaFactucell.negroFondo,
+      body: AnimatedBuilder(
+        animation: _controlador,
+        builder: (context, child) {
+          return Opacity(
+            opacity: _animacionFade.value,
+            child: Transform.scale(
+              scale: _animacionEscala.value,
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // 🔥 Ícono principal — fuego
+                    Container(
+                      width: 160,
+                      height: 160,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: TemaFactucell.rojoFuego.withOpacity(0.4),
+                            blurRadius: 40,
+                            spreadRadius: 5,
+                          ),
+                          BoxShadow(
+                            color: TemaFactucell.naranjaChispa.withOpacity(0.2),
+                            blurRadius: 60,
+                            spreadRadius: 10,
+                          ),
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.local_fireworks_rounded,
+                        size: 100,
+                        color: TemaFactucell.doradoBrillo,
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+
+                    // ✨ NOMBRE
+                    Text(
+                      'FACTUCELL',
+                      style: TextStyle(
+                        fontSize: 42,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                        letterSpacing: 4,
+                        shadows: [
+                          Shadow(
+                            color: TemaFactucell.doradoBrillo.withOpacity(0.6),
+                            blurRadius: 15,
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // 📍 Subtítulo
+                    const Text(
+                      'Ventas • Facturación • Pirotecnia\nGuayaquil, Ecuador 🇪🇨',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 15,
+                        color: TemaFactucell.grisSuave,
+                        height: 1.4,
+                      ),
+                    ),
+                    const SizedBox(height: 40),
+
+                    // ⏳ Cargando...
+                    const CircularProgressIndicator(
+                      color: TemaFactucell.naranjaChispa,
+                      strokeWidth: 3,
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 24),
-                const Text(
-                  'Vende Móvil',
-                  style: TextStyle(
-                    fontSize: 32,
-                    fontWeight: FontWeight.bold,
-                    color: AppTheme.primary,
-                    letterSpacing: 1.2,
-                  ),
-                ),
-              ],
+              ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
