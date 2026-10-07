@@ -1,9 +1,14 @@
+// ==================================================
+// FACTUCELL — Formulario de Producto
+// Versión: 1.0 | Guayaquil, Ecuador 🇪🇨
+// Rubro: Artículos y Juegos Pirotécnicos 🎆
+// ==================================================
+
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import '../theme/app_theme.dart';
-import '../utils/safe_area_padding.dart';
 import '../models/producto.dart';
 import '../services/database_service.dart';
 import '../utils/peso_formatter.dart';
@@ -13,526 +18,301 @@ class ProductoFormScreen extends StatefulWidget {
   final Producto? producto;
   final String? codigoBarras;
   const ProductoFormScreen({super.key, this.producto, this.codigoBarras});
+
   @override
   State<ProductoFormScreen> createState() => _ProductoFormScreenState();
 }
 
 class _ProductoFormScreenState extends State<ProductoFormScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _db = DatabaseService.instance;
-  late final TextEditingController _codigoCtrl;
-  late final TextEditingController _nombreCtrl;
-  late final TextEditingController _descripcionCtrl;
-  late final TextEditingController _precioCompraCtrl;
-  late final TextEditingController _precioVentaCtrl;
-  late final TextEditingController _stockCtrl;
-  late final TextEditingController _stockMinimoCtrl;
+  
+  late TextEditingController _nombreCtrl;
+  late TextEditingController _codigoCtrl;
+  late TextEditingController _precioCompraCtrl;
+  late TextEditingController _precioVentaCtrl;
+  late TextEditingController _stockCtrl;
+  late TextEditingController _descripcionCtrl;
+  
   String? _categoriaSeleccionada;
-  List<String> _categorias = [];
-  String? _imagenUrl;
-  bool _isEditing = false;
-  bool _saving = false;
-  String _tipoVenta = TipoVenta.unidad;
+  String? _rutaImagen;
+  bool _esEdicion = false;
+  bool _guardando = false;
+
+  // 🎇 CATEGORÍAS DE TU NEGOCIO
+  static const List<String> categorias = [
+    'Fuegos Artificiales 🎇',
+    'Cohetes y Baterías 🚀',
+    'Luces y Chispas ✨',
+    'Artículos de Temporada 🎉',
+    'Accesorios y Seguridad 🛡️',
+  ];
 
   @override
   void initState() {
     super.initState();
-    _isEditing = widget.producto != null;
-    final p = widget.producto;
-    _codigoCtrl = TextEditingController(text: p?.codigoBarras ?? widget.codigoBarras ?? '');
-    _nombreCtrl = TextEditingController(text: p?.nombre ?? '');
-    _descripcionCtrl = TextEditingController(text: p?.descripcion ?? '');
-    _precioCompraCtrl = TextEditingController(text: p != null ? p.precioCompra.toStringAsFixed(2) : '');
-    _precioVentaCtrl = TextEditingController(text: p != null ? p.precioVenta.toStringAsFixed(2) : '');
-    _tipoVenta = p?.tipoVenta ?? TipoVenta.unidad;
+    _esEdicion = widget.producto != null;
+    
+    _nombreCtrl = TextEditingController(text: widget.producto?.nombre ?? '');
+    _codigoCtrl = TextEditingController(
+      text: widget.producto?.codigo ?? widget.codigoBarras ?? const Uuid().v4().substring(0, 8).toUpperCase()
+    );
+    _precioCompraCtrl = TextEditingController(
+      text: widget.producto?.precioCompra.toString() ?? ''
+    );
+    _precioVentaCtrl = TextEditingController(
+      text: widget.producto?.precioVenta.toString() ?? ''
+    );
     _stockCtrl = TextEditingController(
-      text: p == null
-          ? ''
-          : p.esPeso
-              ? PesoFormatter.kgInputFromGrams(p.stock)
-              : '${p.stock}',
+      text: widget.producto?.stock.toString() ?? '0'
     );
-    _stockMinimoCtrl = TextEditingController(
-      text: p == null
-          ? '5'
-          : p.esPeso
-              ? PesoFormatter.kgInputFromGrams(p.stockMinimo)
-              : '${p.stockMinimo}',
+    _descripcionCtrl = TextEditingController(
+      text: widget.producto?.descripcion ?? ''
     );
-    _categoriaSeleccionada = p?.categoria;
-    _imagenUrl = p?.imagenUrl;
-    _cargarCategorias();
+    _categoriaSeleccionada = widget.producto?.categoria ?? categorias.first;
+    _rutaImagen = widget.producto?.imagen;
   }
 
-  Future<void> _cargarCategorias() async {
-    final cats = await _db.obtenerCategorias();
-    if (mounted) setState(() => _categorias = cats);
-  }
-
-  Future<void> _escanear() async {
-    final codigo = await Navigator.push<String>(
-      context,
-      MaterialPageRoute(builder: (_) => const ScannerScreen(titulo: 'Escanear Código')),
-    );
-    if (codigo != null) {
-      if (_codigoCtrl.text.trim().isEmpty) {
-        _codigoCtrl.text = codigo;
-      } else {
-        if (!_codigoCtrl.text.contains(codigo)) {
-          _codigoCtrl.text = '${_codigoCtrl.text.trim()}, $codigo';
-        }
-      }
-    }
+  @override
+  void dispose() {
+    _nombreCtrl.dispose();
+    _codigoCtrl.dispose();
+    _precioCompraCtrl.dispose();
+    _precioVentaCtrl.dispose();
+    _stockCtrl.dispose();
+    _descripcionCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _seleccionarImagen() async {
     final picker = ImagePicker();
-    final image = await picker.pickImage(source: ImageSource.gallery);
-    if (image != null) {
-      setState(() => _imagenUrl = image.path);
+    final XFile? imagen = await picker.pickImage(source: ImageSource.camera);
+    if (imagen != null) {
+      setState(() => _rutaImagen = imagen.path);
     }
   }
 
-  void _cambiarTipo(String tipo) {
-    if (tipo == _tipoVenta) return;
-    setState(() {
-      _tipoVenta = tipo;
-      if (!_isEditing) {
-        _stockCtrl.clear();
-        _stockMinimoCtrl.text = tipo == TipoVenta.peso ? '1' : '5';
-      }
-    });
-  }
-
-  int _parseStock(String text) {
-    if (_tipoVenta == TipoVenta.peso) {
-      return PesoFormatter.parseToGrams(text, enKg: true);
+  Future<void> _escanearCodigo() async {
+    final resultado = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ScannerScreen())
+    );
+    if (resultado != null && resultado is String) {
+      setState(() => _codigoCtrl.text = resultado);
     }
-    return int.tryParse(text.trim()) ?? 0;
   }
 
   Future<void> _guardar() async {
     if (!_formKey.currentState!.validate()) return;
-    setState(() => _saving = true);
+
+    setState(() => _guardando = true);
+
+    final producto = Producto(
+      id: _esEdicion ? widget.producto!.id : null,
+      codigo: _codigoCtrl.text.trim(),
+      nombre: _nombreCtrl.text.trim(),
+      categoria: _categoriaSeleccionada,
+      precioCompra: double.tryParse(_precioCompraCtrl.text) ?? 0,
+      precioVenta: double.parse(_precioVentaCtrl.text),
+      stock: int.parse(_stockCtrl.text),
+      descripcion: _descripcionCtrl.text.trim(),
+      imagen: _rutaImagen,
+      fechaCreacion: _esEdicion ? widget.producto!.fechaCreacion : DateTime.now().toIso8601String(),
+      fechaActualizacion: DateTime.now().toIso8601String(),
+    );
+
     try {
-      final producto = Producto(
-        id: widget.producto?.id ?? const Uuid().v4(),
-        codigoBarras: _codigoCtrl.text.trim(),
-        nombre: _nombreCtrl.text.trim(),
-        descripcion: _descripcionCtrl.text.trim().isEmpty ? null : _descripcionCtrl.text.trim(),
-        categoria: _categoriaSeleccionada,
-        precioCompra: double.tryParse(_precioCompraCtrl.text) ?? 0,
-        precioVenta: double.parse(_precioVentaCtrl.text),
-        stock: _parseStock(_stockCtrl.text),
-        stockMinimo: _tipoVenta == TipoVenta.peso
-            ? PesoFormatter.parseToGrams(
-                _stockMinimoCtrl.text.isEmpty ? '0' : _stockMinimoCtrl.text,
-                enKg: true,
-              )
-            : int.tryParse(_stockMinimoCtrl.text) ?? 5,
-        tipoVenta: _tipoVenta,
-        imagenUrl: _imagenUrl,
-        fechaCreacion: widget.producto?.fechaCreacion,
-      );
-      if (_isEditing) {
-        await _db.actualizarProducto(producto);
+      if (_esEdicion) {
+        await DatabaseService.actualizarProducto(producto);
       } else {
-        await _db.insertarProducto(producto);
+        await DatabaseService.agregarProducto(producto);
       }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(_isEditing ? '✓ Producto actualizado' : '✓ Producto guardado'),
-          backgroundColor: AppTheme.success,
-        ));
-        Navigator.pop(context);
-      }
+      if (mounted) Navigator.pop(context, true);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: AppTheme.error),
+          SnackBar(content: Text('Error al guardar: $e'), backgroundColor: Colors.red)
         );
       }
+    } finally {
+      if (mounted) setState(() => _guardando = false);
     }
-    if (mounted) setState(() => _saving = false);
-  }
-
-  Future<void> _eliminar() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Eliminar Producto'),
-        content: Text('¿Eliminar "${widget.producto!.nombre}"? Esta acción no se puede deshacer.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
-            child: const Text('Eliminar'),
-          ),
-        ],
-      ),
-    );
-    if (confirm == true) {
-      await _db.eliminarProducto(widget.producto!.id);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Producto eliminado'), backgroundColor: AppTheme.error),
-        );
-        Navigator.pop(context);
-      }
-    }
-  }
-
-  Future<void> _asociarAProductoExistente() async {
-    final productos = await _db.obtenerProductos();
-    if (!mounted) return;
-    
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: AppTheme.bgWhite,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) {
-        String searchQuery = '';
-        return StatefulBuilder(
-          builder: (BuildContext context, StateSetter setStateModal) {
-            final filtrados = productos.where((p) => 
-              p.nombre.toLowerCase().contains(searchQuery.toLowerCase()) || 
-              p.codigoBarras.contains(searchQuery)
-            ).toList();
-            
-            return Container(
-              height: MediaQuery.of(context).size.height * 0.75,
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  Container(
-                    width: 40, height: 4,
-                    margin: const EdgeInsets.only(bottom: 16),
-                    decoration: BoxDecoration(color: AppTheme.border, borderRadius: BorderRadius.circular(2)),
-                  ),
-                  const Text('Vincular a producto existente', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 8),
-                  const Text('Busca y selecciona el producto al que quieres añadir este nuevo código.', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.textSecondary, fontSize: 13)),
-                  const SizedBox(height: 16),
-                  TextField(
-                    onChanged: (v) => setStateModal(() => searchQuery = v),
-                    decoration: const InputDecoration(
-                      hintText: 'Buscar producto...',
-                      prefixIcon: Icon(Icons.search),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Expanded(
-                    child: filtrados.isEmpty
-                        ? const Center(child: Text('No hay productos que coincidan.'))
-                        : ListView.builder(
-                            itemCount: filtrados.length,
-                            itemBuilder: (_, i) {
-                              final p = filtrados[i];
-                          return ListTile(
-                            leading: Container(
-                              width: 40, height: 40,
-                              decoration: BoxDecoration(
-                                color: AppTheme.primary.withValues(alpha: 0.1),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: const Icon(Icons.inventory_2_outlined, color: AppTheme.primary, size: 20),
-                            ),
-                            title: Text(p.nombre, style: const TextStyle(fontWeight: FontWeight.w600)),
-                            subtitle: Text(
-                              '${p.formatoStock} | Cód: ${p.codigoBarras.split(',').first}..',
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                            trailing: const Icon(Icons.link, color: AppTheme.primary),
-                            onTap: () async {
-                              Navigator.pop(ctx);
-                              if (!p.codigoBarras.contains(widget.codigoBarras!)) {
-                                final pActualizado = p.copyWith(
-                                  codigoBarras: '${p.codigoBarras}, ${widget.codigoBarras!}',
-                                );
-                                await _db.actualizarProducto(pActualizado);
-                                if (mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(content: Text('Código vinculado a ${p.nombre}'), backgroundColor: AppTheme.success),
-                                  );
-                                  Navigator.pop(context); // Cierra el formulario de "Nuevo producto"
-                                }
-                              } else {
-                                if (mounted) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('Este código ya estaba vinculado a este producto.')),
-                                  );
-                                  Navigator.pop(context);
-                                }
-                              }
-                            },
-                          );
-                        },
-                      ),
-              ),
-            ],
-          ),
-        );
-      },
-      );
-      },
-    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_isEditing ? 'Editar Producto' : 'Nuevo Producto'),
+        title: Text(_esEdicion ? 'Editar Producto' : 'Nuevo Producto'),
+        backgroundColor: TemaFactucell.rojoFuego,
+        foregroundColor: Colors.white,
         actions: [
-          if (_isEditing)
-            IconButton(icon: const Icon(Icons.delete_outline, color: AppTheme.error), onPressed: _eliminar),
+          IconButton(
+            icon: const Icon(Icons.qr_code_scanner),
+            onPressed: _escanearCodigo,
+            tooltip: 'Escanear código',
+          ),
         ],
       ),
-      body: Form(
-        key: _formKey,
-        child: ListView(
-          padding: listBottomPadding(context, bottomExtra: 20),
-          children: [
-            Center(
-              child: GestureDetector(
-                onTap: _seleccionarImagen,
-                child: Container(
-                  width: 120,
-                  height: 120,
-                  decoration: BoxDecoration(
-                    color: AppTheme.bgGrey,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: AppTheme.border),
-                    image: _imagenUrl != null
-                        ? DecorationImage(image: FileImage(File(_imagenUrl!)), fit: BoxFit.cover)
-                        : null,
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 🖼️ IMAGEN DEL PRODUCTO
+              Center(
+                child: GestureDetector(
+                  onTap: _seleccionarImagen,
+                  child: Container(
+                    width: 140,
+                    height: 140,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[200],
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: TemaFactucell.naranjaChispa, width: 2),
+                    ),
+                    child: _rutaImagen != null
+                        ? ClipRRect(
+                            borderRadius: BorderRadius.circular(10),
+                            child: Image.file(File(_rutaImagen!), fit: BoxFit.cover)
+                          )
+                        : const Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(Icons.camera_alt, size: 42, color: TemaFactucell.naranjaChispa),
+                              SizedBox(height: 6),
+                              Text('Subir foto', style: TextStyle(color: TemaFactucell.naranjaChispa))
+                            ],
+                          ),
                   ),
-                  child: _imagenUrl == null
-                      ? const Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.add_a_photo, color: AppTheme.textSecondary, size: 32),
-                            SizedBox(height: 8),
-                            Text('Añadir foto', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                          ],
-                        )
-                      : null,
                 ),
               ),
-            ),
-            const SizedBox(height: 20),
-            
-            _buildLabel('Código de Barras'),
-            Row(
-              children: [
-                Expanded(
-                  child: TextFormField(
-                    controller: _codigoCtrl,
-                    decoration: InputDecoration(
-                      hintText: _tipoVenta == TipoVenta.peso
-                          ? 'Opcional (no se vende con escáner)'
-                          : 'Ej: 7750... o varios separados por coma',
-                      prefixIcon: const Icon(Icons.qr_code),
+              const SizedBox(height: 24),
+
+              // 🏷️ CÓDIGO
+              TextFormField(
+                controller: _codigoCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Código',
+                  prefixIcon: Icon(Icons.tag),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                ),
+                validator: (v) => v == null || v.trim().isEmpty ? 'Ingresa un código' : null,
+              ),
+              const SizedBox(height: 16),
+
+              // 📝 NOMBRE
+              TextFormField(
+                controller: _nombreCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Nombre del Producto',
+                  prefixIcon: Icon(Icons.local_fireworks),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                ),
+                validator: (v) => v == null || v.trim().isEmpty ? 'Ingresa el nombre' : null,
+              ),
+              const SizedBox(height: 16),
+
+              // 📂 CATEGORÍA
+              DropdownButtonFormField<String>(
+                value: _categoriaSeleccionada,
+                decoration: const InputDecoration(
+                  labelText: 'Categoría',
+                  prefixIcon: Icon(Icons.category),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                ),
+                items: categorias.map((cat) => DropdownMenuItem(value: cat, child: Text(cat))).toList(),
+                onChanged: (v) => setState(() => _categoriaSeleccionada = v),
+              ),
+              const SizedBox(height: 16),
+
+              // 💰 PRECIOS
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _precioCompraCtrl,
+                      keyboardType: TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Costo \$',
+                        prefixIcon: Icon(Icons.trending_down),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                      ),
                     ),
-                    validator: (v) {
-                      if (_tipoVenta == TipoVenta.peso) return null;
-                      return v == null || v.isEmpty ? 'Ingresa el código' : null;
-                    },
                   ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  decoration: BoxDecoration(color: AppTheme.primary, borderRadius: BorderRadius.circular(12)),
-                  child: IconButton(
-                    icon: const Icon(Icons.qr_code_scanner_rounded, color: Colors.white),
-                    onPressed: _escanear,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _precioVentaCtrl,
+                      keyboardType: TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Precio Venta \$',
+                        prefixIcon: Icon(Icons.trending_up, color: TemaFactucell.rojoFuego),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                      ),
+                      validator: (v) {
+                        if (v == null || v.trim().isEmpty) return 'Requerido';
+                        final val = double.tryParse(v);
+                        if (val == null || val <= 0) return 'Inválido';
+                        return null;
+                      },
+                    ),
                   ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
+              // 📦 STOCK
+              TextFormField(
+                controller: _stockCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'Cantidad en Stock',
+                  prefixIcon: Icon(Icons.inventory_2),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
                 ),
-              ],
-            ),
-            if (!_isEditing && widget.codigoBarras != null) ...[
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: _asociarAProductoExistente,
-                  icon: const Icon(Icons.link_rounded),
-                  label: const Text('Vincular a producto existente'),
-                  style: TextButton.styleFrom(foregroundColor: AppTheme.primary),
+                validator: (v) {
+                  if (v == null || v.trim().isEmpty) return 'Ingresa el stock';
+                  if (int.tryParse(v) == null) return 'Número inválido';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+
+              // 📄 DESCRIPCIÓN
+              TextFormField(
+                controller: _descripcionCtrl,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Descripción / Observaciones',
+                  prefixIcon: Icon(Icons.description),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                ),
+              ),
+              const SizedBox(height: 28),
+
+              // ✅ BOTÓN GUARDAR
+              SizedBox(
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: _guardando ? null : _guardar,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: TemaFactucell.naranjaChispa,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: _guardando
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : Text(
+                          _esEdicion ? 'Actualizar Producto' : 'Guardar Producto',
+                          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                        ),
                 ),
               ),
             ],
-            const SizedBox(height: 16),
-
-            _buildLabel('Nombre del Producto'),
-            TextFormField(
-              controller: _nombreCtrl,
-              decoration: const InputDecoration(hintText: 'Ej: Inca Kola 500ml', prefixIcon: Icon(Icons.inventory_2_outlined)),
-              validator: (v) => v == null || v.isEmpty ? 'Ingresa el nombre' : null,
-              textCapitalization: TextCapitalization.words,
-            ),
-            const SizedBox(height: 16),
-
-            _buildLabel('Descripción (opcional)'),
-            TextFormField(
-              controller: _descripcionCtrl,
-              decoration: const InputDecoration(hintText: 'Descripción breve...'),
-              maxLines: 2,
-            ),
-            const SizedBox(height: 16),
-
-            _buildLabel('Categoría'),
-            DropdownButtonFormField<String>(
-              initialValue: _categoriaSeleccionada,
-              decoration: const InputDecoration(prefixIcon: Icon(Icons.category_outlined)),
-              hint: const Text('Seleccionar categoría'),
-              items: _categorias.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-              onChanged: (v) => setState(() => _categoriaSeleccionada = v),
-            ),
-            const SizedBox(height: 20),
-
-            _buildLabel('Se vende por'),
-            SegmentedButton<String>(
-              segments: const [
-                ButtonSegment(
-                  value: TipoVenta.unidad,
-                  label: Text('Unidad'),
-                  icon: Icon(Icons.inventory_2_outlined, size: 18),
-                ),
-                ButtonSegment(
-                  value: TipoVenta.peso,
-                  label: Text('Kilos'),
-                  icon: Icon(Icons.scale_outlined, size: 18),
-                ),
-              ],
-              selected: {_tipoVenta},
-              onSelectionChanged: (s) => _cambiarTipo(s.first),
-            ),
-            const SizedBox(height: 20),
-
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildLabel(_tipoVenta == TipoVenta.peso
-                          ? 'Precio Compra (S/ por kg)'
-                          : 'Precio Compra (S/)'),
-                      TextFormField(
-                        controller: _precioCompraCtrl,
-                        decoration: const InputDecoration(hintText: '0.00', prefixIcon: Icon(Icons.money_off_outlined)),
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildLabel(_tipoVenta == TipoVenta.peso
-                          ? 'Precio Venta (S/ por kg)'
-                          : 'Precio Venta (S/)'),
-                      TextFormField(
-                        controller: _precioVentaCtrl,
-                        decoration: const InputDecoration(hintText: '0.00', prefixIcon: Icon(Icons.attach_money)),
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        validator: (v) => v == null || v.isEmpty || (double.tryParse(v) ?? 0) <= 0 ? 'Precio inválido' : null,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-
-            Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildLabel(_tipoVenta == TipoVenta.peso
-                          ? 'Stock Actual (kg)'
-                          : 'Stock Actual'),
-                      TextFormField(
-                        controller: _stockCtrl,
-                        decoration: InputDecoration(
-                          hintText: _tipoVenta == TipoVenta.peso ? '0.000' : '0',
-                          prefixIcon: const Icon(Icons.numbers),
-                        ),
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        validator: (v) {
-                          if (v == null || v.isEmpty) return 'Requerido';
-                          if (_tipoVenta == TipoVenta.peso) {
-                            final n = double.tryParse(v.replaceAll(',', '.'));
-                            if (n == null || n < 0) return 'Kg inválido';
-                          }
-                          return null;
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildLabel(_tipoVenta == TipoVenta.peso
-                          ? 'Stock Mínimo (kg)'
-                          : 'Stock Mínimo'),
-                      TextFormField(
-                        controller: _stockMinimoCtrl,
-                        decoration: InputDecoration(
-                          hintText: _tipoVenta == TipoVenta.peso ? '1' : '5',
-                          prefixIcon: const Icon(Icons.warning_amber),
-                        ),
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 32),
-
-            SizedBox(
-              height: 52,
-              child: ElevatedButton.icon(
-                onPressed: _saving ? null : _guardar,
-                icon: _saving
-                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.save_rounded),
-                label: Text(_saving ? 'Guardando...' : (_isEditing ? 'Actualizar Producto' : 'Guardar Producto')),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
-  }
-
-  Widget _buildLabel(String text) {
-    return Padding(
-      padding: const EdgeInsets.only(left: 4, bottom: 8),
-      child: Text(text, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: AppTheme.textSecondary)),
-    );
-  }
-
-  @override
-  void dispose() {
-    _codigoCtrl.dispose();
-    _nombreCtrl.dispose();
-    _descripcionCtrl.dispose();
-    _precioCompraCtrl.dispose();
-    _precioVentaCtrl.dispose();
-    _stockCtrl.dispose();
-    _stockMinimoCtrl.dispose();
-    super.dispose();
   }
 }
