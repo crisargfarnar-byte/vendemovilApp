@@ -14,9 +14,19 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'Factucell - Pirotecnia Ecuador',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.lightTheme,
-      darkTheme: AppTheme.darkTheme,
-      themeMode: ThemeMode.system,
+      theme: ThemeData(
+  colorScheme: ColorScheme.fromSeed(seedColor: Color(0xFFFF6600)
+  useMaterial3: true,
+),
+darkTheme: ThemeData(
+  colorScheme: ColorScheme.fromSeed(
+    seedColor: Color(0xFFFF6600),
+    brightness: Brightness.dark,
+  ),
+  useMaterial3: true,
+),
+
+      
       home: const PantallaInicio(),
     );
   }
