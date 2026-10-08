@@ -15,7 +15,8 @@ class PantallaInicio extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-            const Icon(Icons.local_fireworks, size: 80, color: Color(0xFFFF6600)),
+            const Icon(Icons.fireworks, size: 80, color: Color(0xFFFF6600)),
+
 
               const SizedBox(height: 24),
               const Text(
