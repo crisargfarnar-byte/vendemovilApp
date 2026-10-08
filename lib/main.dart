@@ -1,33 +1,21 @@
-// ==================================================
-// FACTUCELL — Sistema de Ventas y Facturación
-// Versión: 1.0 | Guayaquil, Ecuador 🇪🇨
-// Rubro: Artículos y Juegos Pirotécnicos 🎆
-// ==================================================
-
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'theme/tema.dart';
+import 'theme/app_theme.dart';
 import 'screens/inicio.dart';
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
-  runApp(const FactucellApp());
+  runApp(const MyApp());
 }
 
-class FactucellApp extends StatelessWidget {
-  const FactucellApp({super.key});
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Factucell',
+      title: 'Factucell - Pirotecnia Ecuador',
       debugShowCheckedModeBanner: false,
-      theme: TemaFactucell.claro,
-      darkTheme: TemaFactucell.oscuro,
+      theme: AppTheme.lightTheme,
+      darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.system,
       home: const PantallaInicio(),
     );
