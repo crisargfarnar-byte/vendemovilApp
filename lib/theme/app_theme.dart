@@ -45,7 +45,7 @@ class TemaFactucell {
           letterSpacing: 1.2,
         ),
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: Colors.white,
         elevation: 4,
         shadowColor: naranjaChispa.withOpacity(0.2),
@@ -102,7 +102,7 @@ class TemaFactucell {
           letterSpacing: 1.2,
         ),
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: grisTarjeta,
         elevation: 6,
         shadowColor: rojoFuego.withOpacity(0.3),
